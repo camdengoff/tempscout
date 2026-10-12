@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>TempScout</title>
+
+<!-- These lines let you "Add to Home Screen" on iPhone so it opens like a real app -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="TempScout">
+<meta name="theme-color" content="#000000">
+
+<style>
+  /* ============================================================
+     COLORS & SIZES — change these to restyle the whole app
+     ============================================================ */
+  :root {
+    --bg: #000000;          /* page background */
+    --panel: #1c1c1e;       /* cards */
+    --panel-2: #2c2c2e;     /* inputs, buttons */
+    --text: #ffffff;
+    --muted: #8e8e93;
+    --accent: #0a84ff;      /* blue buttons */
+    --warm: #ff9f0a;
+    --danger: #ff453a;
+    --radius: 16px;
+  }
+
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", Helvetica, Arial, sans-serif;
+    /* leave room for the bottom tab bar and iPhone notch areas */
+    padding: env(safe-area-inset-top) 0 calc(80px + env(safe-area-inset-bottom));
+  }
+
+  header { padding: 14px 16px 6px; font-size: 22px; font-weight: 700; }
+  header span { color: var(--muted); font-weight: 400; font-size: 14px; margin-left: 6px; }
+
+  /* Each "screen" (Meter, ND, Library, Sun) is a .view. Only .active shows. */
+  .view { display: none; padding: 0 16px 16px; }
+  .view.active { display: block; }
+
+  .card { background: var(--panel); border-radius: var(--radius); padding: 14px; margin-top: 12px; }
+  .card h3 { margin: 0 0 10px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+
+  /* ---------- Camera ---------- */
+  .camera { position: relative; border-radius: var(--radius); overflow: hidden; background: #111; aspect-ratio: 3 / 4; max-height: 52vh; width: 100%; }
+  .camera video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .camera video.mirror { transform: scaleX(-1); }
+  /* the white square showing which part of the picture is being measured */
+  .target {
+    position: absolute; top: 50%; left: 50%;
+    width: 20%; aspect-ratio: 1;
+    transform: translate(-50%, -50%);
+    border: 2px solid #fff; border-radius: 6px;
+    box-shadow: 0 0 0 1px rgba(0,0,0,.5), 0 0 0 9999px rgba(0,0,0,.25);
+    pointer-events: none;
+  }
+  .camera .msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 24px; color: var(--muted); }
+
+  /* ---------- Readouts ---------- */
+  .readouts { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 10px; }
+  .read { background: var(--panel); border-radius: var(--radius); padding: 12px; }
+  .read .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+  .read .value { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .read.big .value { font-size: 38px; color: var(--warm); }
+  .read .sub { font-size: 12px; color: var(--muted); margin-top: 2px; min-height: 15px; }
+
+  .swatch { height: 10px; border-radius: 5px; margin-top: 8px; background: linear-gradient(90deg, #ff8a12 0%, #ffd9a8 30%, #ffffff 50%, #c9dcff 75%, #8fb4ff 100%); position: relative; }
+  .swatch i { position: absolute; top: -3px; width: 4px; height: 16px; background: #fff; border-radius: 2px; box-shadow: 0 0 0 1px #000; transform: translateX(-50%); }
+
+  canvas#hist { width: 100%; height: 90px; display: block; background: #000; border-radius: 10px; }
+
+  /* ---------- Buttons & inputs ---------- */
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  button, select, input[type=text], input[type=number] {
+    font: inherit; color: var(--text); background: var(--panel-2);
+    border: 0; border-radius: 12px; padding: 12px 14px;
+  }
+  button { font-weight: 600; flex: 1; min-width: 0; cursor: pointer; }
+  button.primary { background: var(--accent); }
+  button.danger { color: var(--danger); }
+  button.small { padding: 8px 10px; font-size: 13px; flex: none; }
+  button.on { background: var(--warm); color: #000; }
+  input[type=text], input[type=number], select { width: 100%; }
+  input[type=range] { width: 100%; }
+  label.field { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+
+  /* ---------- ND result ---------- */
+  .nd-result { text-align: center; padding: 18px 8px; }
+  .nd-result .stops { font-size: 56px; font-weight: 800; color: var(--warm); line-height: 1; }
+  .nd-result .name { font-size: 18px; margin-top: 6px; }
+  .nd-result .detail { font-size: 13px; color: var(--muted); margin-top: 6px; }
+
+  /* ---------- Library ---------- */
+  .shot { display: flex; gap: 12px; align-items: center; padding: 12px 0; border-top: 1px solid var(--panel-2); }
+  .shot:first-child { border-top: 0; }
+  .chip { width: 44px; height: 44px; border-radius: 10px; flex: none; border: 1px solid rgba(255,255,255,.2); }
+  .shot .info { flex: 1; min-width: 0; }
+  .shot .k { font-weight: 700; font-size: 17px; }
+  .shot .meta { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+  .empty { color: var(--muted); text-align: center; padding: 20px 0; }
+
+  /* ---------- Sun ---------- */
+  .sunrow { display: flex; justify-content: space-between; padding: 10px 0; border-top: 1px solid var(--panel-2); font-variant-numeric: tabular-nums; }
+  .sunrow:first-of-type { border-top: 0; }
+  .sunrow span:first-child { color: var(--muted); }
+
+  /* ---------- Bottom tab bar ---------- */
+  nav {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    display: flex; background: rgba(28,28,30,.92); backdrop-filter: blur(20px);
+    padding: 8px 8px calc(8px + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--panel-2);
+  }
+  nav button { background: none; color: var(--muted); font-size: 12px; padding: 8px 4px; }
+  nav button.active { color: var(--accent); }
+  nav button b { display: block; font-size: 20px; margin-bottom: 2px; font-weight: 400; }
+
+  .note { font-size: 12px; color: var(--muted); line-height: 1.45; margin-top: 10px; }
+</style>
+</head>
+<body>
+
+<header>TempScout <span>free light &amp; color meter</span></header>
+
+<!-- ============================================================
+     SCREEN 1: METER
+     ============================================================ -->
+<section class="view active" id="view-meter">
+  <div class="camera" id="camera">
+    <video id="video" playsinline muted autoplay></video>
+    <div class="target" id="target"></div>
+    <div class="msg" id="camMsg">Tap “Start camera” to begin.<br>Point at a white or gray surface for the best reading.</div>
+  </div>
+
+  <div class="row">
+    <button class="primary" id="btnStart">Start camera</button>
+    <button id="btnFlip">Flip</button>
+    <button id="btnHold">Hold</button>
+  </div>
+
+  <div class="readouts" style="margin-top:12px">
+    <div class="read big">
+      <div class="label">Color temp</div>
+      <div class="value" id="rdK">—</div>
+      <div class="sub" id="rdKsub">Kelvin</div>
+    </div>
+    <div class="read">
+      <div class="label">Tint</div>
+      <div class="value" id="rdTint" style="font-size:24px">—</div>
+      <div class="sub" id="rdTintSub">&nbsp;</div>
+    </div>
+    <div class="read">
+      <div class="label">Bright</div>
+      <div class="value" id="rdLum" style="font-size:24px">—</div>
+      <div class="sub">of max</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="swatch"><i id="swatchPin" style="left:50%"></i></div>
+    <div class="grid2" style="margin-top:6px;font-size:11px;color:var(--muted)">
+      <span>2000K warm</span><span style="text-align:right">10000K cool</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Luminance histogram</h3>
+    <canvas id="hist" width="640" height="180"></canvas>
+    <div class="grid2" style="font-size:11px;color:var(--muted);margin-top:6px">
+      <span>Shadows</span><span style="text-align:right">Highlights</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Measure area</h3>
+    <input type="range" id="areaSize" min="5" max="60" value="20">
+
+    <h3 style="margin-top:14px">Compare to a reference</h3>
+    <div id="refBox" class="note" style="margin:0 0 8px">No reference set. Press “Set reference” to lock in the current look.</div>
+    <div class="row" style="margin-top:0">
+      <button id="btnRef">Set reference</button>
+      <button id="btnClearRef">Clear</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Save this reading</h3>
+    <input type="text" id="noteInput" placeholder="Note (e.g. “Sanctuary stage, 10am”)">
+    <div class="row"><button class="primary" id="btnSave">Save to library</button></div>
+  </div>
+
+  <div class="card">
+    <h3>Calibrate (optional)</h3>
+    <div class="note" style="margin-top:0">iPhone cameras auto-adjust white balance, so readings are estimates. If you have a real meter, or a known light (e.g. a 5600K panel), enter its value here while pointing at that light. The app will correct all readings to match.</div>
+    <label class="field">Known Kelvin</label>
+    <input type="number" id="calK" placeholder="5600" inputmode="numeric">
+    <div class="row">
+      <button id="btnCal">Calibrate to this</button>
+      <button id="btnCalReset">Reset</button>
+    </div>
+    <div class="note" id="calInfo"></div>
+  </div>
+</section>
+
+<!-- ============================================================
+     SCREEN 2: ND CALCULATOR
+     ============================================================ -->
+<section class="view" id="view-nd">
+  <div class="card">
+    <h3>1 · Exposure that looks right now (no ND)</h3>
+    <div class="grid3">
+      <div><label class="field">Aperture</label><select id="aA"></select></div>
+      <div><label class="field">Shutter</label><select id="sA"></select></div>
+      <div><label class="field">ISO</label><select id="iA"></select></div>
+    </div>
+  </div>
+  <div class="card">
+    <h3>2 · Settings you want instead</h3>
+    <div class="grid3">
+      <div><label class="field">Aperture</label><select id="aB"></select></div>
+      <div><label class="field">Shutter</label><select id="sB"></select></div>
+      <div><label class="field">ISO</label><select id="iB"></select></div>
+    </div>
+  </div>
+  <div class="card nd-result">
+    <div class="stops" id="ndStops">0</div>
+    <div class="name" id="ndName">stops of ND</div>
+    <div class="detail" id="ndDetail"></div>
+  </div>
+  <div class="note">Example: you’re outside at f/11, 1/48, ISO 100 and want a shallow, blurry background at f/2.8. The app tells you how strong an ND filter you need to keep the same brightness.</div>
+</section>
+
+<!-- ============================================================
+     SCREEN 3: LIBRARY
+     ============================================================ -->
+<section class="view" id="view-lib">
+  <div class="card">
+    <h3>Saved readings</h3>
+    <div id="shotList"></div>
+  </div>
+  <div class="row">
+    <button id="btnExport">Copy as text</button>
+    <button class="danger" id="btnClearAll">Delete all</button>
+  </div>
+</section>
+
+<!-- ============================================================
+     SCREEN 4: SUN
+     ============================================================ -->
+<section class="view" id="view-sun">
+  <div class="card">
+    <h3>Sun times (approximate)</h3>
+    <div class="row" style="margin-top:0"><button class="primary" id="btnLoc">Use my location</button></div>
+    <div class="note" id="sunStatus">Tap the button to get today’s sunrise, golden hour, and sunset for where you are.</div>
+    <div id="sunRows" style="margin-top:8px"></div>
+  </div>
+</section>
+
+<!-- ============================================================
+     BOTTOM TAB BAR
+     ============================================================ -->
+<nav>
+  <button class="active" data-view="meter"><b>◉</b>Meter</button>
+  <button data-view="nd"><b>◐</b>ND</button>
+  <button data-view="lib"><b>▤</b>Library</button>
+  <button data-view="sun"><b>☀︎</b>Sun</button>
+</nav>
+
+<script>
+/* ==================================================================
+   HELPERS
+   ================================================================== */
+const $ = id => document.getElementById(id);
+
+// Safely save/load (Safari private mode can block storage)
+function store(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) {} }
+function load(key, fallback) {
+  try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch (e) { return fallback; }
+}
+
+/* ==================================================================
+   TABS — show one screen at a time
+   ================================================================== */
+document.querySelectorAll('nav button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    btn.classList.add('active');
+    $('view-' + btn.dataset.view).classList.add('active');
+    if (btn.dataset.view === 'lib') renderLibrary();
+  });
+});
+
+/* ==================================================================
+   COLOR MATH
+   Turns the average Red/Green/Blue of the picture into an
+   estimated color temperature in Kelvin.
+   ================================================================== */
+
+// Camera values are "gamma encoded"; this converts them to real light amounts
+function toLinear(c) {
+  c = c / 255;
+  return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+}
+
+// RGB -> Kelvin (uses the standard "McCamy" formula)
+function rgbToKelvin(r, g, b) {
+  const R = toLinear(r), G = toLinear(g), B = toLinear(b);
+  const X = 0.4124 * R + 0.3576 * G + 0.1805 * B;
+  const Y = 0.2126 * R + 0.7152 * G + 0.0722 * B;
+  const Z = 0.0193 * R + 0.1192 * G + 0.9505 * B;
+  const sum = X + Y + Z;
+  if (sum < 0.002) return null;                 // too dark to measure
+  const x = X / sum, y = Y / sum;
+  const n = (x - 0.3320) / (0.1858 - y);
+  const k = 449 * n * n * n + 3525 * n * n + 6823.3 * n + 5520.33;
+  return Math.max(1500, Math.min(12000, k));
+}
+
+// "Mired" is a scale where equal steps look equally different. Handy for comparing.
+const mired = k => 1e6 / k;
+
+/* ==================================================================
+   CAMERA + MEASURING
+   ================================================================== */
+const video = $('video');
+let stream = null;
+let facing = 'environment';        // back camera. 'user' = front camera.
+let held = false;                  // is the reading frozen?
+let calOffsetMired = load('ts_cal', 0);
+let reference = load('ts_ref', null);
+let current = null;                // the latest reading {k, tint, lum}
+
+// small hidden canvases used to read pixels
+const regionCanvas = document.createElement('canvas'); regionCanvas.width = regionCanvas.height = 32;
+const frameCanvas  = document.createElement('canvas'); frameCanvas.width = frameCanvas.height = 96;
+const regionCtx = regionCanvas.getContext('2d', { willReadFrequently: true });
+const frameCtx  = frameCanvas.getContext('2d',  { willReadFrequently: true });
+
+async function startCamera() {
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false
+    });
+    video.srcObject = stream;
+    video.classList.toggle('mirror', facing === 'user');
+    $('camMsg').style.display = 'none';
+    $('btnStart').textContent = 'Camera on';
+  } catch (err) {
+    $('camMsg').style.display = 'flex';
+    $('camMsg').innerHTML = 'Couldn’t open the camera.<br><br>' +
+      'Make sure the page is opened from a secure (https) link in Safari and that camera access is allowed in Settings → Safari → Camera.';
+  }
+}
+
+$('btnStart').addEventListener('click', startCamera);
+$('btnFlip').addEventListener('click', () => {
+  facing = facing === 'environment' ? 'user' : 'environment';
+  startCamera();
+});
+$('btnHold').addEventListener('click', () => {
+  held = !held;
+  $('btnHold').classList.toggle('on', held);
+  $('btnHold').textContent = held ? 'Held' : 'Hold';
+});
+
+// The measure-area slider changes the size of the white square
+$('areaSize').addEventListener('input', e => {
+  $('target').style.width = e.target.value + '%';
+  store('ts_area', e.target.value);
+});
+(function restoreArea() {
+  const v = load('ts_area', 20);
+  $('areaSize').value = v;
+  $('target').style.width = v + '%';
+})();
+
+// Keep a smoothed average so numbers don't flicker
+let avg = null;
+function smooth(prev, next, a) { return prev === null ? next : prev + (next - prev) * a; }
+
+function measure() {
+  if (!stream || video.readyState < 2 || held) return;
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw) return;
+
+  // --- 1. Measure the colour inside the white square ---
+  // The video fills the box using "cover", so the square maps onto the middle of the frame.
+  const box = $('camera').getBoundingClientRect();
+  const scale = Math.max(box.width / vw, box.height / vh);          // how much video was enlarged
+  const sizePx = (parseFloat($('areaSize').value) / 100) * box.width; // square size on screen
+  const side = sizePx / scale;                                        // square size in video pixels
+  const sx = vw / 2 - side / 2, sy = vh / 2 - side / 2;
+  regionCtx.drawImage(video, sx, sy, side, side, 0, 0, 32, 32);
+  const d = regionCtx.getImageData(0, 0, 32, 32).data;
+  let r = 0, g = 0, b = 0, n = d.length / 4;
+  for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; }
+  r /= n; g /= n; b /= n;
+
+  if (!avg) avg = { r, g, b };
+  avg.r = smooth(avg.r, r, 0.25); avg.g = smooth(avg.g, g, 0.25); avg.b = smooth(avg.b, b, 0.25);
+
+  let k = rgbToKelvin(avg.r, avg.g, avg.b);
+  if (k !== null) {
+    // apply calibration offset (done in mireds so it behaves evenly)
+    k = 1e6 / (mired(k) + calOffsetMired);
+    k = Math.max(1500, Math.min(12000, k));
+  }
+  const lum = (0.2126 * avg.r + 0.7152 * avg.g + 0.0722 * avg.b) / 255;
+  const tint = ((avg.g - (avg.r + avg.b) / 2) / Math.max(1, (avg.r + avg.g + avg.b) / 3)) * 100;
+
+  current = { k: k ? Math.round(k / 10) * 10 : null, tint: Math.round(tint * 10) / 10, lum: Math.round(lum * 100), rgb: [avg.r, avg.g, avg.b].map(Math.round) };
+
+  // --- 2. Histogram of the whole frame ---
+  frameCtx.drawImage(video, 0, 0, 96, 96);
+  const fd = frameCtx.getImageData(0, 0, 96, 96).data;
+  const bins = new Array(64).fill(0);
+  for (let i = 0; i < fd.length; i += 4) {
+    const y = 0.2126 * fd[i] + 0.7152 * fd[i + 1] + 0.0722 * fd[i + 2];
+    bins[Math.min(63, y >> 2)]++;
+  }
+  drawHistogram(bins);
+  updateReadouts();
+}
+
+function updateReadouts() {
+  if (!current) return;
+  const c = current;
+  $('rdK').textContent = c.k ? c.k + 'K' : '—';
+  $('rdLum').textContent = c.lum + '%';
+
+  if (Math.abs(c.tint) < 0.8) { $('rdTint').textContent = 'Neutral'; $('rdTintSub').textContent = ''; }
+  else {
+    $('rdTint').textContent = (c.tint > 0 ? '+' : '') + c.tint;
+    $('rdTintSub').textContent = c.tint > 0 ? 'toward green' : 'toward magenta';
+  }
+
+  // Describe the light in plain words
+  if (c.k) {
+    let word = c.k < 2800 ? 'Candle / tungsten glow' : c.k < 3500 ? 'Warm tungsten' : c.k < 4500 ? 'Warm white'
+      : c.k < 5200 ? 'Neutral white' : c.k < 6000 ? 'Daylight' : c.k < 7500 ? 'Overcast / cool' : 'Shade / blue sky';
+    $('rdKsub').textContent = word;
+    const pct = (Math.max(2000, Math.min(10000, c.k)) - 2000) / 8000 * 100;
+    $('swatchPin').style.left = pct + '%';
+  }
+
+  // Compare against the reference, if there is one
+  if (reference && c.k) {
+    const dk = c.k - reference.k;
+    const dm = Math.round(mired(c.k) - mired(reference.k));
+    $('refBox').innerHTML = 'Reference: <b>' + reference.k + 'K</b> · Now: <b>' + c.k + 'K</b><br>' +
+      'Difference: <b>' + (dk > 0 ? '+' : '') + dk + 'K</b> (' + (dm > 0 ? '+' : '') + dm + ' mired) — ' +
+      (Math.abs(dk) < 150 ? 'a close match ✓' : dk > 0 ? 'cooler / bluer than reference' : 'warmer / more orange than reference');
+  }
+}
+
+function drawHistogram(bins) {
+  const cv = $('hist'), ctx = cv.getContext('2d');
+  const w = cv.width, h = cv.height;
+  ctx.clearRect(0, 0, w, h);
+  const max = Math.max(...bins) || 1;
+  const bw = w / bins.length;
+  for (let i = 0; i < bins.length; i++) {
+    const bh = (bins[i] / max) * (h - 4);
+    const shade = Math.round(70 + (i / 63) * 185);
+    ctx.fillStyle = 'rgb(' + shade + ',' + shade + ',' + shade + ')';
+    ctx.fillRect(i * bw, h - bh, bw - 1, bh);
+  }
+  // mark clipping at either end
+  if (bins[0] / max > 0.9)  { ctx.fillStyle = '#ff453a'; ctx.fillRect(0, 0, 4, h); }
+  if (bins[63] / max > 0.9) { ctx.fillStyle = '#ff453a'; ctx.fillRect(w - 4, 0, 4, h); }
+}
+
+// Run the measuring ~10 times per second
+setInterval(measure, 100);
+
+/* ---------- Reference + calibration buttons ---------- */
+$('btnRef').addEventListener('click', () => {
+  if (!current || !current.k) return alert('Start the camera and point at something first.');
+  reference = { k: current.k, lum: current.lum };
+  store('ts_ref', reference);
+  updateReadouts();
+});
+$('btnClearRef').addEventListener('click', () => {
+  reference = null; store('ts_ref', null);
+  $('refBox').textContent = 'No reference set. Press “Set reference” to lock in the current look.';
+});
+
+function showCalInfo() {
+  $('calInfo').textContent = calOffsetMired
+    ? 'Calibration active (' + (calOffsetMired > 0 ? '+' : '') + Math.round(calOffsetMired) + ' mired shift).'
+    : 'No calibration applied.';
+}
+$('btnCal').addEventListener('click', () => {
+  const known = parseFloat($('calK').value);
+  if (!known || !avg) return alert('Start the camera, point at your known light, and enter its Kelvin value.');
+  const raw = rgbToKelvin(avg.r, avg.g, avg.b);
+  if (!raw) return alert('Too dark to calibrate.');
+  calOffsetMired = mired(known) - mired(raw);
+  store('ts_cal', calOffsetMired);
+  showCalInfo();
+});
+$('btnCalReset').addEventListener('click', () => { calOffsetMired = 0; store('ts_cal', 0); showCalInfo(); });
+showCalInfo();
+
+/* ==================================================================
+   SHOT LIBRARY
+   ================================================================== */
+let shots = load('ts_shots', []);
+
+function saveShot(lat, lng) {
+  shots.unshift({
+    id: Date.now(),
+    t: new Date().toISOString(),
+    k: current.k, tint: current.tint, lum: current.lum, rgb: current.rgb,
+    note: $('noteInput').value.trim(),
+    lat: lat, lng: lng
+  });
+  store('ts_shots', shots);
+  $('noteInput').value = '';
+  $('btnSave').textContent = 'Saved ✓';
+  setTimeout(() => $('btnSave').textContent = 'Save to library', 1200);
+}
+
+$('btnSave').addEventListener('click', () => {
+  if (!current || !current.k) return alert('Start the camera and point at something first.');
+  // Try to attach location (optional — saves anyway if it's declined or slow)
+  if (!navigator.geolocation) return saveShot(null, null);
+  let done = false;
+  const finish = (a, b) => { if (!done) { done = true; saveShot(a, b); } };
+  navigator.geolocation.getCurrentPosition(
+    p => finish(+p.coords.latitude.toFixed(5), +p.coords.longitude.toFixed(5)),
+    () => finish(null, null),
+    { timeout: 3000, maximumAge: 60000 }
+  );
+  setTimeout(() => finish(null, null), 3200);
+});
+
+function renderLibrary() {
+  const box = $('shotList');
+  if (!shots.length) { box.innerHTML = '<div class="empty">No saved readings yet.</div>'; return; }
+  box.innerHTML = shots.map(s => {
+    const when = new Date(s.t).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    const loc = s.lat != null ? ' · ' + s.lat + ', ' + s.lng : '';
+    const note = s.note ? '<div>' + escapeHtml(s.note) + '</div>' : '';
+    return '<div class="shot">' +
+      '<div class="chip" style="background:rgb(' + s.rgb.join(',') + ')"></div>' +
+      '<div class="info"><div class="k">' + s.k + 'K <span style="font-weight:400;color:var(--muted);font-size:13px">tint ' + s.tint + ' · ' + s.lum + '%</span></div>' +
+      note + '<div class="meta">' + when + loc + '</div></div>' +
+      '<div style="display:flex;flex-direction:column;gap:6px">' +
+      '<button class="small" data-ref="' + s.id + '">Use as ref</button>' +
+      '<button class="small danger" data-del="' + s.id + '">Delete</button></div></div>';
+  }).join('');
+}
+function escapeHtml(t) { return t.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+$('shotList').addEventListener('click', e => {
+  const del = e.target.dataset.del, ref = e.target.dataset.ref;
+  if (del) { shots = shots.filter(s => s.id != del); store('ts_shots', shots); renderLibrary(); }
+  if (ref) {
+    const s = shots.find(s => s.id == ref);
+    reference = { k: s.k, lum: s.lum }; store('ts_ref', reference);
+    alert('Reference set to ' + s.k + 'K. Go to the Meter tab to compare.');
+  }
+});
+$('btnClearAll').addEventListener('click', () => {
+  if (confirm('Delete all saved readings?')) { shots = []; store('ts_shots', shots); renderLibrary(); }
+});
+$('btnExport').addEventListener('click', async () => {
+  const text = shots.map(s => new Date(s.t).toLocaleString() + ' | ' + s.k + 'K | tint ' + s.tint + ' | ' + s.lum + '% | ' + (s.note || '') +
+    (s.lat != null ? ' | ' + s.lat + ',' + s.lng : '')).join('\n');
+  try { await navigator.clipboard.writeText(text); alert('Copied! Paste it into Notes or an email.'); }
+  catch (e) { prompt('Copy this:', text); }
+});
+
+/* ==================================================================
+   ND CALCULATOR
+   "Stops" = how many times the light doubles or halves.
+   Light amount ∝ shutter time × ISO ÷ aperture².
+   ================================================================== */
+const APERTURES = [1.4, 1.8, 2, 2.8, 4, 5.6, 8, 11, 16, 22];
+const SHUTTERS = [
+  ['1/4000', 1/4000], ['1/2000', 1/2000], ['1/1000', 1/1000], ['1/500', 1/500], ['1/250', 1/250],
+  ['1/125', 1/125], ['1/100', 1/100], ['1/60', 1/60], ['1/50', 1/50], ['1/48', 1/48], ['1/30', 1/30],
+  ['1/24', 1/24], ['1/15', 1/15], ['1/8', 1/8], ['1/4', 1/4], ['1/2', 1/2], ['1 sec', 1]
+];
+const ISOS = [50, 100, 200, 400, 800, 1600, 3200, 6400];
+
+function fillSelect(id, items, selectedIndex) {
+  $(id).innerHTML = items.map((it, i) =>
+    '<option value="' + (Array.isArray(it) ? it[1] : it) + '"' + (i === selectedIndex ? ' selected' : '') + '>' +
+    (Array.isArray(it) ? it[0] : (id[0] === 'a' ? 'f/' + it : it)) + '</option>').join('');
+}
+fillSelect('aA', APERTURES, 7);   // f/11
+fillSelect('sA', SHUTTERS, 9);    // 1/48
+fillSelect('iA', ISOS, 1);        // ISO 100
+fillSelect('aB', APERTURES, 3);   // f/2.8
+fillSelect('sB', SHUTTERS, 9);    // 1/48
+fillSelect('iB', ISOS, 1);        // ISO 100
+
+function lightAmount(a, s, i) { return (s * i) / (a * a); }
+
+function calcND() {
+  const A = lightAmount(+$('aA').value, +$('sA').value, +$('iA').value);
+  const B = lightAmount(+$('aB').value, +$('sB').value, +$('iB').value);
+  const stops = Math.log2(B / A);
+  const rounded = Math.round(stops * 3) / 3;      // nearest 1/3 stop
+
+  if (rounded > 0.15) {
+    const whole = Math.round(stops);
+    $('ndStops').textContent = rounded.toFixed(1).replace('.0', '');
+    $('ndName').textContent = 'stops of ND needed';
+    const strength = Math.pow(2, whole);
+    $('ndDetail').innerHTML = 'Closest filter: <b>ND' + strength + '</b> (' + whole + ' stops, density ' + (whole * 0.3).toFixed(1) + ')' +
+      '<br>Variable ND: set to about ' + rounded.toFixed(1) + ' stops.';
+  } else if (rounded < -0.15) {
+    $('ndStops').textContent = '0';
+    $('ndName').textContent = 'No ND needed';
+    $('ndDetail').textContent = 'These settings let in ' + Math.abs(rounded).toFixed(1).replace('.0', '') + ' stops LESS light — you’d be underexposed.';
+  } else {
+    $('ndStops').textContent = '0';
+    $('ndName').textContent = 'No ND needed';
+    $('ndDetail').textContent = 'Both settings give the same exposure.';
+  }
+}
+['aA', 'sA', 'iA', 'aB', 'sB', 'iB'].forEach(id => $(id).addEventListener('change', calcND));
+calcND();
+
+/* ==================================================================
+   SUN TIMES  (standard sunrise/sunset math — accurate to a few minutes)
+   ================================================================== */
+const rad = Math.PI / 180, deg = 180 / Math.PI;
+const mod = (n, m) => ((n % m) + m) % m;
+
+function sunEvent(date, lat, lng, rising, zenith) {
+  const start = new Date(date.getFullYear(), 0, 0);
+  const N = Math.floor((date - start) / 86400000);       // day of year
+  const lngHour = lng / 15;
+  const t = N + ((rising ? 6 : 18) - lngHour) / 24;
+  const M = 0.9856 * t - 3.289;
+  const L = mod(M + 1.916 * Math.sin(M * rad) + 0.020 * Math.sin(2 * M * rad) + 282.634, 360);
+  let RA = mod(deg * Math.atan(0.91764 * Math.tan(L * rad)), 360);
+  RA += Math.floor(L / 90) * 90 - Math.floor(RA / 90) * 90;
+  RA /= 15;
+  const sinDec = 0.39782 * Math.sin(L * rad);
+  const cosDec = Math.cos(Math.asin(sinDec));
+  const cosH = (Math.cos(zenith * rad) - sinDec * Math.sin(lat * rad)) / (cosDec * Math.cos(lat * rad));
+  if (cosH > 1 || cosH < -1) return null;                // sun never rises/sets that day
+  let H = rising ? 360 - deg * Math.acos(cosH) : deg * Math.acos(cosH);
+  H /= 15;
+  const T = H + RA - 0.06571 * t - 6.622;
+  const UT = mod(T - lngHour, 24);
+  const base = Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+  return new Date(base + UT * 3600000);
+}
+
+$('btnLoc').addEventListener('click', () => {
+  $('sunStatus').textContent = 'Finding your location…';
+  navigator.geolocation.getCurrentPosition(pos => {
+    const { latitude: lat, longitude: lng } = pos.coords;
+    const today = new Date();
+    const fmt = d => d ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—';
+    const rows = [
+      ['First light',          sunEvent(today, lat, lng, true, 96)],
+      ['Sunrise',              sunEvent(today, lat, lng, true, 90.833)],
+      ['Morning golden hour ends', sunEvent(today, lat, lng, true, 84)],
+      ['Evening golden hour starts', sunEvent(today, lat, lng, false, 84)],
+      ['Sunset',               sunEvent(today, lat, lng, false, 90.833)],
+      ['Last light',           sunEvent(today, lat, lng, false, 96)]
+    ];
+    $('sunRows').innerHTML = rows.map(r => '<div class="sunrow"><span>' + r[0] + '</span><span>' + fmt(r[1]) + '</span></div>').join('');
+    $('sunStatus').textContent = 'For ' + lat.toFixed(2) + ', ' + lng.toFixed(2) + ' · ' + today.toLocaleDateString();
+  }, () => {
+    $('sunStatus').textContent = 'Couldn’t get your location. Allow location access for Safari and try again.';
+  }, { timeout: 8000 });
+});
+
+renderLibrary();
+</script>
+</body>
+</html>
