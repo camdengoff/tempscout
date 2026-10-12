@@ -240,3 +240,60 @@ final class MeterEngineTests: XCTestCase {
         XCTAssertEqual(e.live!.kelvin!, 5600, accuracy: 30)
     }
 }
+
+final class CardModeTests: XCTestCase {
+    private func lin(_ v: Double) -> RGB { RGB(r: v, g: v, b: v) }
+
+    /// In card mode the number is the camera's own: no colour maths, no white balance offset.
+    func testCardReadingIsTheCamerasKelvin() {
+        let e = MeterEngine()
+        for _ in 0..<12 { e.ingestCard(kelvin: 4000, tintPercent: 1.5, neutralError: 0.005, linear: lin(0.4), clipped: false) }
+        XCTAssertEqual(e.live!.kelvin!, 4000, accuracy: 1)
+        XCTAssertEqual(e.live!.tint, 1.5, accuracy: 1e-9)
+        XCTAssertEqual(e.quality, .steady)
+    }
+
+    func testStillAdjustingShowsSettling() {
+        let e = MeterEngine()
+        for _ in 0..<12 { e.ingestCard(kelvin: 4000, tintPercent: 0, neutralError: 0.2, linear: lin(0.4), clipped: false) }
+        XCTAssertEqual(e.quality, .settling)
+    }
+
+    func testCardMeasureAveragesAndHolds() {
+        let e = MeterEngine()
+        e.ingestCard(kelvin: 3000, tintPercent: 0, neutralError: 0, linear: lin(0.4), clipped: false)
+        e.startMeasuring()
+        for i in 0..<MeterEngine.framesPerMeasure {
+            // 29 frames at 3000K and one outlier; the average sits between
+            e.ingestCard(kelvin: i == 0 ? 3600 : 3000, tintPercent: 2, neutralError: 0, linear: lin(0.4), clipped: false)
+        }
+        XCTAssertTrue(e.isHeld)
+        XCTAssertGreaterThan(e.held!.kelvin!, 2950)
+        XCTAssertLessThan(e.held!.kelvin!, 3100)
+        XCTAssertEqual(e.held!.tint, 2, accuracy: 1e-9)
+        XCTAssertNotNil(e.held!.spreadK)
+        e.resume()
+        XCTAssertFalse(e.isHeld)
+    }
+
+    func testCalibrationAppliesToCameraKelvin() {
+        let e = MeterEngine()
+        for _ in 0..<12 { e.ingestCard(kelvin: 5200, tintPercent: 0, neutralError: 0, linear: lin(0.4), clipped: false) }
+        let measured = e.measuredMiredForCalibration()!
+        XCTAssertEqual(1e6 / measured, 5200, accuracy: 1)                         // raw camera value, uncalibrated
+        e.calPoints = [CalPoint(m: measured, t: ColorMath.mired(5600))]            // the light was really 5600K
+        e.refresh()
+        XCTAssertEqual(e.live!.kelvin!, 5600, accuracy: 1)
+        XCTAssertEqual(e.uncalibratedKelvin()!, 5200, accuracy: 1)
+    }
+
+    func testResetClearsEverything() {
+        let e = MeterEngine()
+        for _ in 0..<12 { e.ingestCard(kelvin: 5200, tintPercent: 0, neutralError: 0, linear: lin(0.4), clipped: false) }
+        e.reset()
+        XCTAssertNil(e.live)
+        XCTAssertNil(e.measuredMiredForCalibration())
+        XCTAssertEqual(e.quality, .waiting)
+    }
+}
+
