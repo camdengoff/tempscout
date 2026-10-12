@@ -124,8 +124,7 @@ final class CameraController: NSObject, ObservableObject, AVCaptureVideoDataOutp
             try dev.lockForConfiguration()
             defer { dev.unlockForConfiguration() }
             // plain sRGB, so the colour maths matches what we sample
-            let srgb = NSNumber(value: AVCaptureColorSpace.sRGB.rawValue)
-            if dev.activeFormat.supportedColorSpaces.contains(srgb) {
+            if dev.activeFormat.supportedColorSpaces.contains(.sRGB) {
                 dev.activeColorSpace = .sRGB
             }
             if dev.activeFormat.isVideoHDRSupported {
