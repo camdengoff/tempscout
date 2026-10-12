@@ -48,13 +48,15 @@ swift test
 
 ## Using it
 
-- The camera starts on the Meter tab. The **padlock** button (bottom left of the panel) locks/unlocks white balance;
-  the slider in Settings (the sliders icon) sets which temperature it's locked at. Set it near the light you expect.
-- Point the white square at a **white or gray card** in the light you want to measure. The status pill says whether
-  the signal is good (too dark / too bright / moving / steady).
+- **Card mode (default, easiest):** hold a **white or gray card** so it fills the white square. The app adjusts the
+  camera's white balance until the card looks neutral, then reads the colour temperature from Apple's own factory
+  calibration of your camera. No lock and no calibration needed to start. Wait for the pill to say "Steady".
 - Tap the round shutter to **Measure**: it averages 3 seconds and shows a ± spread. Tap again to resume live.
-- **Calibrate** (Settings): measure a light of known Kelvin, type its value, "Add calibration point". Two lights, one warm
-  and one cool, give a curve that stays accurate across the range. Redo after changing the white balance lock.
+- Exposure automatically follows the white square (and freezes during a Measure), so the card is always exposed well.
+- **Manual lock mode** (Settings ▸ Measuring mode): you lock white balance yourself (padlock button, slider in Settings) and
+  calibrate against lights of known colour. Card and Manual keep separate calibration points.
+- **Calibrate (optional):** if a light whose colour you know reads off, point at it with the card, Measure, type its
+  Kelvin in Settings ▸ Calibrate and add it. Settings shows what the camera reads versus what is shown.
 - The ND row under the Kelvin number comes from the ND tab; tap it to edit.
 
 ## Without XcodeGen

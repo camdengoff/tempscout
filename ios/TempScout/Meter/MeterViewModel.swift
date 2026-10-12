@@ -18,6 +18,9 @@ final class MeterViewModel: ObservableObject {
     @Published private(set) var lockedKelvin: Double?
 
     // Settings (saved)
+    /// Card mode (default): the app adjusts the camera's white balance to the card and reads Apple's calibrated temperature.
+    /// Manual mode: lock the white balance yourself and calibrate against known lights.
+    @Published private(set) var cardMode: Bool
     @Published private(set) var wantLock: Bool
     @Published private(set) var wbKelvin: Double
     @Published private(set) var exposureLockWanted: Bool
@@ -28,18 +31,20 @@ final class MeterViewModel: ObservableObject {
             engine.calPoints = calPoints
             engine.refresh()
             sync()
-            if let data = try? JSONEncoder().encode(calPoints) { defaults.set(data, forKey: "ts_cal_pts") }
+            if let data = try? JSONEncoder().encode(calPoints) { defaults.set(data, forKey: calibrationKey(card: cardMode)) }
         }
     }
 
     init() {
         let d = UserDefaults.standard
+        let card = d.object(forKey: "ts_card_mode") as? Bool ?? true
+        cardMode = card
         wantLock = d.object(forKey: "ts_wb_lock") as? Bool ?? true
         wbKelvin = d.object(forKey: "ts_wb_k") as? Double ?? 5500
         exposureLockWanted = d.object(forKey: "ts_exp_lock") as? Bool ?? false
         areaFraction = d.object(forKey: "ts_area") as? Double ?? 0.2
         referenceKelvin = d.object(forKey: "ts_ref_k") as? Int
-        if let data = d.data(forKey: "ts_cal_pts"), let pts = try? JSONDecoder().decode([CalPoint].self, from: data) {
+        if let data = d.data(forKey: card ? "ts_cal_card" : "ts_cal_pts"), let pts = try? JSONDecoder().decode([CalPoint].self, from: data) {
             calPoints = pts
         } else {
             calPoints = []
@@ -63,7 +68,12 @@ final class MeterViewModel: ObservableObject {
 
     private func handle(_ sample: CameraSample) {
         autoKelvin = sample.autoKelvin
-        engine.ingest(linear: sample.linear, clipped: sample.clipped)
+        if cardMode {
+            engine.ingestCard(kelvin: sample.cardKelvin, tintPercent: sample.cardTintPercent,
+                              neutralError: sample.neutralError, linear: sample.linear, clipped: sample.clipped)
+        } else {
+            engine.ingest(linear: sample.linear, clipped: sample.clipped)
+        }
         sync()
     }
 
@@ -75,23 +85,51 @@ final class MeterViewModel: ObservableObject {
     }
 
     private func lockChanged(to k: Double?) {
+        if cardMode { lockedKelvin = k; return }          // card mode adjusts the white balance itself
         // a different white balance means a held reading no longer applies
         engine.lockedKelvin = k
-        if engine.isHeld { engine.resume() }
+        if engine.isHeld {
+            engine.resume()
+            camera.freezeExposure(false)
+        }
         lockedKelvin = k
         sync()
     }
 
     private func applyCameraSettings() {
-        camera.setWhiteBalance(kelvin: wantLock ? wbKelvin : nil)
+        camera.setCardMode(cardMode)
+        if !cardMode { camera.setWhiteBalance(kelvin: wantLock ? wbKelvin : nil) }
         camera.setExposureLocked(exposureLockWanted)
+    }
+
+    private func calibrationKey(card: Bool) -> String { card ? "ts_cal_card" : "ts_cal_pts" }
+
+    /// Switch between Card and Manual. Their numbers are not comparable, so each keeps its own calibration points.
+    func setCardMode(_ on: Bool) {
+        guard on != cardMode else { return }
+        cardMode = on
+        defaults.set(on, forKey: "ts_card_mode")
+        var pts: [CalPoint] = []
+        if let data = defaults.data(forKey: calibrationKey(card: on)),
+           let saved = try? JSONDecoder().decode([CalPoint].self, from: data) { pts = saved }
+        calPoints = pts                               // (saved again under the new mode's key, which is harmless)
+        engine.reset()
+        engine.calPoints = pts
+        camera.freezeExposure(false)
+        applyCameraSettings()
+        sync()
     }
 
     // MARK: - Actions
 
     func toggleMeasure() {
-        if engine.isHeld { engine.resume() }
-        else if engine.progress == nil { engine.startMeasuring() }
+        if engine.isHeld {
+            engine.resume()
+            camera.freezeExposure(false)            // exposure follows the square again
+        } else if engine.progress == nil {
+            engine.startMeasuring()
+            camera.freezeExposure(true)             // hold brightness steady for the 3 seconds
+        }
         sync()
     }
 
@@ -121,6 +159,9 @@ final class MeterViewModel: ObservableObject {
     }
 
     func resetCalibration() { calPoints = [] }
+
+    /// What the camera says right now, before calibration (for the diagnostic in Settings).
+    var uncalibratedKelvin: Double? { engine.uncalibratedKelvin() }
 
     func setReferenceFromReading() {
         referenceKelvin = reading?.displayKelvin

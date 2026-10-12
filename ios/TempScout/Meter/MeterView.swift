@@ -222,7 +222,7 @@ struct MeterView: View {
     private var chips: some View {
         HStack {
             stat("Bright", vm.reading.map { "\(Int(($0.luminance * 100).rounded()))%" } ?? "—")
-            stat("WB", vm.lockedKelvin.map { "\(Int($0))K" } ?? "Auto")
+            stat("WB", vm.cardMode ? "Card" : (vm.lockedKelvin.map { "\(Int($0))K" } ?? "Auto"))
             stat("Cal", vm.calPoints.isEmpty ? "None" : "\(vm.calPoints.count) pt" + (vm.calPoints.count > 1 ? "s" : ""))
         }
         .padding(.horizontal, 6).padding(.vertical, 8)
@@ -257,16 +257,24 @@ struct MeterView: View {
 
     private var shutterRow: some View {
         HStack {
-            Button {
-                vm.setWhiteBalanceLock(vm.lockedKelvin == nil)
-                show(vm.lockedKelvin == nil ? "White balance locked at \(Int(vm.wbKelvin))K" : "White balance: auto")
-            } label: {
-                Image(systemName: vm.lockedKelvin == nil ? "lock.open" : "lock.fill")
+            if vm.cardMode {
+                // Card mode needs no lock: the app adjusts white balance to the card by itself
+                Image(systemName: "rectangle.dashed")
                     .font(.system(size: 22))
-                    .foregroundColor(vm.lockedKelvin == nil ? .white : Theme.warm)
+                    .foregroundColor(Theme.muted)
                     .frame(maxWidth: .infinity, minHeight: 54)
+            } else {
+                Button {
+                    vm.setWhiteBalanceLock(vm.lockedKelvin == nil)
+                    show(vm.lockedKelvin == nil ? "White balance locked at \(Int(vm.wbKelvin))K" : "White balance: auto")
+                } label: {
+                    Image(systemName: vm.lockedKelvin == nil ? "lock.open" : "lock.fill")
+                        .font(.system(size: 22))
+                        .foregroundColor(vm.lockedKelvin == nil ? .white : Theme.warm)
+                        .frame(maxWidth: .infinity, minHeight: 54)
+                }
+                .disabled(!vm.camera.whiteBalanceLockSupported)
             }
-            .disabled(!vm.camera.whiteBalanceLockSupported)
 
             Button { vm.toggleMeasure() } label: { shutter }
 
@@ -396,24 +404,57 @@ struct SettingsSheet: View {
     @State private var note = ""
     @State private var message: String?
 
+    private var fitDescription: String {
+        guard !vm.calPoints.isEmpty else { return "No calibration yet: the two numbers above are the same." }
+        let f = Calibration.fit(vm.calPoints)
+        return String(format: "Fit from %d point%@: slope %.2f, shift %+.0f mired.", f.n, f.n == 1 ? "" : "s", f.a, f.b)
+    }
+
+    /// Manual mode only: lock the camera's white balance by hand.
+    @ViewBuilder
+    private var whiteBalanceControls: some View {
+        if vm.camera.whiteBalanceLockSupported {
+            Toggle("Lock white balance", isOn: Binding(get: { vm.wantLock }, set: { vm.setWhiteBalanceLock($0) }))
+            VStack(alignment: .leading) {
+                Text("Locked at \(Int(vm.wbKelvin))K")
+                Slider(value: Binding(get: { vm.wbKelvin }, set: { vm.setWhiteBalanceKelvin($0) }), in: 2500...8000, step: 100)
+            }
+            Text(vm.lockedKelvin != nil
+                 ? "Locked. Light of \(Int(vm.wbKelvin))K looks neutral to the camera, and readings are corrected for that. Set it near the light you expect."
+                 : "Automatic" + (vm.autoKelvin.map { ". The camera's own guess right now: \(Int(($0 / 50).rounded() * 50))K." } ?? "."))
+                .font(.footnote).foregroundColor(Theme.muted)
+        } else {
+            Text("This camera can't lock white balance.").foregroundColor(Theme.muted)
+        }
+    }
+
     var body: some View {
         NavigationStack {
             Form {
-                Section("White balance") {
-                    if vm.camera.whiteBalanceLockSupported {
-                        Toggle("Lock white balance", isOn: Binding(get: { vm.wantLock }, set: { vm.setWhiteBalanceLock($0) }))
-                        VStack(alignment: .leading) {
-                            Text("Locked at \(Int(vm.wbKelvin))K")
-                            Slider(value: Binding(get: { vm.wbKelvin }, set: { vm.setWhiteBalanceKelvin($0) }), in: 2500...8000, step: 100)
-                        }
-                        Text(vm.lockedKelvin != nil
-                             ? "Locked. Light of \(Int(vm.wbKelvin))K looks neutral to the camera, and readings are corrected for that. Set it near the light you expect."
-                             : "Automatic" + (vm.autoKelvin.map { ". The camera's own guess right now: \(Int(($0 / 50).rounded() * 50))K." } ?? "."))
-                            .font(.footnote).foregroundColor(Theme.muted)
-                    } else {
-                        Text("This camera can't lock white balance.").foregroundColor(Theme.muted)
+                Section("Measuring mode") {
+                    Picker("Mode", selection: Binding(get: { vm.cardMode }, set: { vm.setCardMode($0) })) {
+                        Text("Card (easy)").tag(true)
+                        Text("Manual lock").tag(false)
                     }
+                    .pickerStyle(.segmented)
+                    Text(vm.cardMode
+                         ? "Hold a white or gray card in the square. The app adjusts the camera's white balance until the card looks neutral, then reads the colour temperature from Apple's own factory calibration of your camera. No lock or calibration needed to start."
+                         : "Advanced. You lock the camera's white balance yourself and calibrate against lights of known colour.")
+                        .font(.footnote).foregroundColor(Theme.muted)
+                }
+
+                if !vm.cardMode {
+                    Section("White balance") {
+                        whiteBalanceControls
+                    }
+                }
+
+                Section("Exposure") {
                     Toggle("Lock exposure", isOn: Binding(get: { vm.exposureLockWanted }, set: { vm.setExposureLock($0) }))
+                    Text(vm.exposureLockWanted
+                         ? "Exposure is frozen. If the card looks too dark or too bright, turn this off."
+                         : "Automatic: exposure follows the white square, so the card is exposed well whatever is around it. It also freezes during a Measure.")
+                        .font(.footnote).foregroundColor(Theme.muted)
                 }
 
                 Section("Measure area") {
@@ -424,8 +465,16 @@ struct SettingsSheet: View {
                 }
 
                 Section("Calibrate (optional)") {
-                    Text("Point at a light of known Kelvin (a bulb's label, a panel, a real meter), tap Measure, type its Kelvin below and add it. Use two lights, one warm (like 2700K) and one cool (like 5600K), for the best consistency.")
+                    Text(vm.cardMode
+                         ? "Optional. Card mode already uses Apple's calibration, so try it as is. If a light you know the colour of reads off, point at it with the card, tap Measure, type its Kelvin below and add it. The correction then applies to every reading."
+                         : "Point at a light of known Kelvin (a bulb's label, a panel, a real meter), tap Measure, type its Kelvin below and add it. Use two lights, one warm (like 2700K) and one cool (like 5600K), for the best consistency.")
                         .font(.footnote).foregroundColor(Theme.muted)
+                    // live check: is the calibration actually changing the number?
+                    if let raw = vm.uncalibratedKelvin, let shown = vm.reading?.kelvin {
+                        HStack { Text("Camera reads"); Spacer(); Text("\(Int((raw / 10).rounded() * 10))K").monospacedDigit() }
+                        HStack { Text("Shown after calibration"); Spacer(); Text("\(Int((shown / 10).rounded() * 10))K").monospacedDigit() }
+                    }
+                    Text(fitDescription).font(.footnote).foregroundColor(Theme.muted)
                     TextField("Known Kelvin, e.g. 5600", text: $knownKelvin).keyboardType(.numberPad)
                     Button("Add calibration point") {
                         if let k = Double(knownKelvin), vm.addCalibrationPoint(knownKelvin: k) {
