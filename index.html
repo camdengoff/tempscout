@@ -291,7 +291,9 @@
       <button class="primary" id="btnSunStart">Start sun finder</button>
       <button id="btnSunAlign">Align to sun</button>
     </div>
-    <div class="note" id="sunNote">Faint dots = today’s sun path. The bold line is the next 2 hours, with a marker every 30 minutes. Compasses drift near metal and speakers; if the marker looks off, point the center cross at the real sun (don’t stare at it, use a shadow or the glare) and tap “Align to sun”.</div>
+    <label class="field" id="fovLabel">Camera field of view: 65°</label>
+    <input type="range" id="fovSlider" min="45" max="85" step="1" value="65">
+    <div class="note" id="sunNote">Faint dots = today’s sun path. The bold line is the next 2 hours, with a marker every 30 minutes. If the marker slides against the real sky as you turn, adjust the field of view until it stays put. Compasses drift near metal and speakers; if the marker looks off, point the center cross at the real sun (don’t stare at it, use a shadow or the glare) and tap “Align to sun”.</div>
   </div>
 
   <div class="card">
@@ -828,7 +830,7 @@ let sunPath = [], sunPathDay = '';       // today's path, for the dotted arc
 let sunNowPos = null;                    // {az, alt} right now
 let azOffset = 0;                        // compass correction set by "Align to sun"
 let sensorSeen = false, sensorAbsolute = false;
-const HFOV_LONG_SIDE = 65;               // approx. field of view of the main camera along its long side (degrees)
+let HFOV_LONG_SIDE = load('ts_fov', 65);  // approx. field of view of the main camera along its long side (degrees)
 
 // Sun's position in the sky (NOAA-style, good to well under a degree)
 function sunPosition(date, lat, lng) {
@@ -869,38 +871,61 @@ function buildSunAhead() {
 }
 
 /* ---------- Phone orientation ---------- */
-// smoothed angles stored as sin/cos so 359° -> 1° doesn't jump
-const ang = { a: null, b: null, g: null };
-function smoothAngle(key, degVal, k) {
-  const s = Math.sin(degVal * rad), c = Math.cos(degVal * rad);
-  const p = ang[key];
-  ang[key] = p ? { s: p.s + (s - p.s) * k, c: p.c + (c - p.c) * k } : { s, c };
-}
-const angDeg = key => Math.atan2(ang[key].s, ang[key].c) * deg;
-
-function onOrientation(e) {
-  if (e.beta == null || e.gamma == null) return;
-  let alpha = e.alpha;
-  if (typeof e.webkitCompassHeading === 'number' && e.webkitCompassHeading >= 0) {
-    alpha = 360 - e.webkitCompassHeading;           // iPhone: true-north reference
-    sensorAbsolute = true;
-  } else if (e.absolute || e.type === 'deviceorientationabsolute') {
-    sensorAbsolute = true;
-  }
-  if (alpha == null) return;
-  sensorSeen = true;
-  smoothAngle('a', alpha, 0.35); smoothAngle('b', e.beta, 0.35); smoothAngle('g', e.gamma, 0.35);
-}
-
-// Rotation matrix that turns phone coordinates into world coordinates (East, North, Up)
-function phoneToWorld() {
-  const a = angDeg('a') * rad, b = angDeg('b') * rad, g = angDeg('g') * rad;
+// The phone reports its tilt as three Euler angles. Held upright (the normal way to aim a camera)
+// those angles are unstable: alpha and gamma can swing against each other while the phone barely
+// moves. So each reading is turned into a rotation matrix straight away, and the matrix is what
+// gets smoothed.
+let Rs = null;                // smoothed raw rotation matrix (phone -> world), rows
+let yawOff = null;            // iPhone only: {s, c} correction from the phone's arbitrary yaw to true north
+function eulerToMatrix(aDeg, bDeg, gDeg) {
+  const a = aDeg * rad, b = bDeg * rad, g = gDeg * rad;
   const cA = Math.cos(a), sA = Math.sin(a), cB = Math.cos(b), sB = Math.sin(b), cG = Math.cos(g), sG = Math.sin(g);
   return [
     [cA * cG - sA * sB * sG, -cB * sA, cG * sA * sB + cA * sG],
     [cG * sA + cA * sB * sG,  cA * cB, sA * sG - cA * cG * sB],
     [-cB * sG,                sB,      cB * cG]
   ];
+}
+// blend toward the new matrix, then re-square it (columns unit length and perpendicular)
+function blendMatrix(prev, next, k) {
+  const m = prev.map((row, i) => row.map((v, j) => v + (next[i][j] - v) * k));
+  const col = j => [m[0][j], m[1][j], m[2][j]];
+  const norm = v => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return v.map(x => x / l); };
+  const c0 = norm(col(0));
+  let c1 = col(1); const d = c1[0] * c0[0] + c1[1] * c0[1] + c1[2] * c0[2];
+  c1 = norm(c1.map((x, i) => x - d * c0[i]));
+  const c2 = [c0[1] * c1[2] - c0[2] * c1[1], c0[2] * c1[0] - c0[0] * c1[2], c0[0] * c1[1] - c0[1] * c1[0]];
+  return [[c0[0], c1[0], c2[0]], [c0[1], c1[1], c2[1]], [c0[2], c1[2], c2[2]]];
+}
+const azOf = (E, N) => mod(Math.atan2(E, N) * deg, 360);
+
+function onOrientation(e) {
+  if (e.beta == null || e.gamma == null || e.alpha == null) return;
+  const Rn = eulerToMatrix(e.alpha, e.beta, e.gamma);
+  Rs = Rs ? blendMatrix(Rs, Rn, 0.3) : Rn;
+  sensorSeen = true;
+
+  if (typeof e.webkitCompassHeading === 'number' && e.webkitCompassHeading >= 0) {
+    // iPhone: alpha has an arbitrary starting yaw, so use the compass heading only to find that yaw.
+    // The heading is where the back camera points, until the phone is nearly flat (camera straight up or
+    // down), where only the top of the phone has a direction.
+    sensorAbsolute = true;
+    const camDir = Math.abs(Rn[2][2]) < 0.95;
+    const raw = camDir ? azOf(-Rn[0][2], -Rn[1][2]) : azOf(Rn[0][1], Rn[1][1]);
+    const off = (e.webkitCompassHeading - raw) * rad;
+    const t = { s: Math.sin(off), c: Math.cos(off) };
+    yawOff = yawOff ? { s: yawOff.s + (t.s - yawOff.s) * 0.05, c: yawOff.c + (t.c - yawOff.c) * 0.05 } : t;
+  } else if (e.absolute || e.type === 'deviceorientationabsolute') {
+    sensorAbsolute = true;
+  }
+}
+
+// Rotation matrix that turns phone coordinates into world coordinates (East, North, Up)
+function phoneToWorld() {
+  if (!yawOff) return Rs;
+  // turn the whole world about the vertical axis by the yaw correction
+  const s = yawOff.s, c = yawOff.c;
+  return [0, 1, 2].reduce((out, j) => { out[0][j] = c * Rs[0][j] + s * Rs[1][j]; out[1][j] = -s * Rs[0][j] + c * Rs[1][j]; out[2][j] = Rs[2][j]; return out; }, [[0,0,0],[0,0,0],[0,0,0]]);
 }
 
 // Where the back camera points: compass direction + height
@@ -939,7 +964,7 @@ function drawSun() {
   if (sunCanvas.width !== W || sunCanvas.height !== H) { sunCanvas.width = W; sunCanvas.height = H; }
   sctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   sctx.clearRect(0, 0, box.width, box.height);
-  if (!sunLoc || !sensorSeen || !ang.a) return;
+  if (!sunLoc || !sensorSeen || !Rs) return;
 
   const now = Date.now();
   if (!sunTick || now - sunTick > 1000) {
@@ -1091,14 +1116,19 @@ function stopSunFinder(keepMsg) {
   cancelAnimationFrame(sunRaf);
   if (sunStream) sunStream.getTracks().forEach(t => t.stop());
   sunStream = null; sunVideo.srcObject = null;
-  sunRunning = false; sensorSeen = false; sensorAbsolute = false; ang.a = ang.b = ang.g = null;
+  sunRunning = false; sensorSeen = false; sensorAbsolute = false; Rs = null; yawOff = null;
   $('btnSunStart').textContent = 'Start sun finder';
   if (!keepMsg) { $('sunMsg').style.display = 'flex'; $('sunMsg').textContent = 'Tap “Start sun finder”, then hold your phone up and sweep it around the sky.'; }
 }
 
+$('fovSlider').value = HFOV_LONG_SIDE; $('fovLabel').textContent = 'Camera field of view: ' + HFOV_LONG_SIDE + '°';
+$('fovSlider').addEventListener('input', e => {
+  HFOV_LONG_SIDE = +e.target.value; store('ts_fov', HFOV_LONG_SIDE);
+  $('fovLabel').textContent = 'Camera field of view: ' + HFOV_LONG_SIDE + '°';
+});
 $('btnSunStart').addEventListener('click', startSunFinder);
 $('btnSunAlign').addEventListener('click', () => {
-  if (!sunRunning || !sunNowPos || !ang.a) return alert('Start the sun finder first, then point the center cross at the real sun.');
+  if (!sunRunning || !sunNowPos || !Rs) return alert('Start the sun finder first, then point the center cross at the real sun.');
   const aim = cameraAim(phoneToWorld());
   azOffset = wrap180(aim.az - (sunNowPos.az));            // how far the compass is off
   $('sunNote').textContent = 'Compass aligned (' + (azOffset > 0 ? '+' : '') + Math.round(azOffset) + '° correction). Tap “Start sun finder” again to reset.';
