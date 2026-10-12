@@ -1,0 +1,40 @@
+# XcodeGen project definition. Run `xcodegen` in this folder to create TempScout.xcodeproj (see README.md).
+name: TempScout
+options:
+  bundleIdPrefix: com.camdengoff
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+
+packages:
+  TempScoutCore:
+    path: TempScoutCore
+
+targets:
+  TempScout:
+    type: application
+    platform: iOS
+    sources:
+      - path: TempScout
+    dependencies:
+      - package: TempScoutCore
+    info:
+      path: TempScout/Info.plist
+      properties:
+        CFBundleDisplayName: TempScout
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        NSCameraUsageDescription: TempScout reads the colour of the light through the camera.
+        NSLocationWhenInUseUsageDescription: TempScout uses your location for sunrise, sunset and golden hour times.
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.camdengoff.tempscout
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
