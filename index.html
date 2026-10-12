@@ -63,6 +63,12 @@
   }
   .camera .msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 24px; color: var(--muted); }
 
+  .quality { font-size: 13px; margin-top: 10px; padding: 8px 12px; border-radius: 10px; background: var(--panel); color: var(--muted); }
+  .quality.good { color: #30d158; }
+  .quality.warn { color: var(--warm); }
+  .calpt { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-top: 1px solid var(--panel-2); font-size: 14px; font-variant-numeric: tabular-nums; }
+  .calpt button { flex: none; padding: 4px 10px; font-size: 13px; }
+
   /* ---------- Readouts ---------- */
   .readouts { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 10px; }
   .read { background: var(--panel); border-radius: var(--radius); padding: 12px; }
@@ -121,6 +127,67 @@
   .sunstats span { display: block; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
   .sunstats b { font-variant-numeric: tabular-nums; font-size: 15px; }
 
+
+  /* ---------- Meter: full-screen camera with a floating glass panel ---------- */
+  body[data-view="meter"] { padding-top: 0; }
+  body[data-view="meter"] header { display: none; }
+  body[data-view="meter"] #view-meter { padding: 0 0 16px; }
+  #view-meter > .card { margin-left: 16px; margin-right: 16px; }
+  .hero { position: relative; height: calc(100vh - 64px - env(safe-area-inset-bottom)); height: calc(100svh - 64px - env(safe-area-inset-bottom)); min-height: 560px; overflow: hidden; background: #0b0c0b; }
+  .hero .camera { position: absolute; inset: 0; border-radius: 0; aspect-ratio: auto; max-height: none; width: 100%; height: 100%; }
+  .hero .target { top: 27%; width: 20%; box-shadow: 0 0 0 1px rgba(0,0,0,.5); }
+  .hero .camera .msg { align-items: flex-start; padding-top: calc(env(safe-area-inset-top) + 100px); color: #d1d1d6; }
+  .startbtn { position: absolute; left: 50%; top: 30%; transform: translateX(-50%); z-index: 3; flex: none; padding: 14px 26px; border-radius: 999px; background: #fff; color: #000; font-size: 17px; box-shadow: 0 6px 24px rgba(0,0,0,.4); }
+  .hudtop { position: absolute; left: 0; right: 0; top: 0; padding: calc(env(safe-area-inset-top) + 10px) 14px 0; z-index: 2; pointer-events: none; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .hudtop .brand { align-self: flex-start; font-weight: 700; font-size: 17px; text-shadow: 0 1px 6px rgba(0,0,0,.6); }
+  .hero .quality { margin: 0; max-width: 100%; text-align: center; font-size: 13px; color: #fff; background: rgba(20,22,20,.55); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border-radius: 999px; padding: 7px 14px; }
+  .hero .quality.good { color: #30d158; } .hero .quality.warn { color: var(--warm); }
+
+  .panel { position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 2; border-radius: 24px; overflow: hidden;
+    background: rgba(38,41,38,.72); backdrop-filter: blur(26px) saturate(1.3); -webkit-backdrop-filter: blur(26px) saturate(1.3);
+    border: 1px solid rgba(255,255,255,.07); box-shadow: 0 10px 40px rgba(0,0,0,.35); }
+  .panel > * { border-top: 1px solid rgba(255,255,255,.08); }
+  .panel > *:first-child { border-top: 0; }
+  .panel svg { width: 24px; height: 24px; fill: none; stroke: #fff; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .toolbar { display: grid; grid-template-columns: repeat(4, 1fr); background: rgba(0,0,0,.12); }
+  .toolbar button { background: none; border-radius: 0; padding: 13px 0; display: flex; justify-content: center; }
+  .toolbar button:active { background: rgba(255,255,255,.1); }
+  .toolbar button.on svg { stroke: var(--warm); }
+
+  .bigread { display: flex; align-items: baseline; justify-content: center; gap: 14px; padding: 12px 14px 0; border-top: 0; }
+  .kval { font-size: clamp(54px, 17vw, 74px); font-weight: 400; letter-spacing: -.02em; line-height: 1; font-variant-numeric: tabular-nums; }
+  .tint { display: flex; flex-direction: column; align-items: flex-start; min-width: 62px; }
+  .tint b { font-size: 21px; font-weight: 500; color: #d1d1d6; font-variant-numeric: tabular-nums; }
+  .tint small { font-size: 10px; color: #a1a1a6; }
+  .kdesc { text-align: center; font-size: 13px; color: #c7c7cc; padding: 2px 14px 10px; border-top: 0 !important; }
+
+  .chips { display: flex; justify-content: space-around; padding: 8px 6px; }
+  .chips div { text-align: center; flex: 1; }
+  .chips span { display: block; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: #a1a1a6; }
+  .chips b { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  .scale { padding: 10px 18px 9px; }
+  .scale .ticks { display: flex; justify-content: space-between; font-size: 12px; color: #c7c7cc; font-variant-numeric: tabular-nums; }
+  .scale .bar { position: relative; height: 5px; border-radius: 3px; margin: 9px 0 0; }
+  .scale .tintscale .bar, .tintscale .bar { margin: 9px 0 0; }
+  .kbar { background: linear-gradient(90deg, #ff7a18 0%, #ffc27a 28%, #f4f1ea 50%, #9cc2ff 78%, #2f7bff 100%); }
+  .tbar { background: linear-gradient(90deg, #a8f0a8 0%, #e9f7e4 50%, #f0b4e8 100%); }
+  .scale .bar i { position: absolute; top: 50%; width: 22px; height: 22px; background: #fff; border-radius: 50%; transform: translate(-50%, -50%); box-shadow: 0 2px 8px rgba(0,0,0,.5); transition: left .12s linear; }
+  .scale .ticks + .bar { margin-top: 9px; }
+
+  .shutterrow { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; padding: 10px 6px 12px; background: rgba(0,0,0,.12); }
+  .shutterrow .side { background: none; display: flex; justify-content: center; align-items: center; padding: 10px; }
+  .shutterrow .text { font-size: 17px; font-weight: 500; color: #fff; }
+  .shutter { flex: none; width: 66px; height: 66px; border-radius: 50%; padding: 0; background: none; border: 4px solid #fff; position: relative; }
+  .shutter i { position: absolute; inset: 4px; border-radius: 50%; background: #fff; transition: transform .15s, background .15s; }
+  .shutter:active i { transform: scale(.88); }
+  .shutter.busy i { background: var(--warm); animation: pulse 0.8s ease-in-out infinite alternate; }
+  .shutter.on i { background: var(--warm); }
+  @keyframes pulse { to { transform: scale(.75); } }
+  .toast { position: fixed; left: 50%; top: calc(env(safe-area-inset-top) + 60px); transform: translateX(-50%); background: rgba(0,0,0,.78); color: #fff; padding: 9px 16px; border-radius: 999px; font-size: 14px; z-index: 50; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .toast.show { opacity: 1; }
+  nav { background: rgba(24,26,24,.82); }
+
   /* ---------- Bottom tab bar ---------- */
   nav {
     position: fixed; left: 0; right: 0; bottom: 0;
@@ -135,7 +202,8 @@
   .note { font-size: 12px; color: var(--muted); line-height: 1.45; margin-top: 10px; }
 </style>
 </head>
-<body>
+<body data-view="meter">
+<div class="toast" id="toast"></div>
 
 <header>TempScout <span>free light &amp; color meter</span></header>
 
@@ -143,40 +211,53 @@
      SCREEN 1: METER
      ============================================================ -->
 <section class="view active" id="view-meter">
-  <div class="camera" id="camera">
-    <video id="video" playsinline muted autoplay></video>
-    <div class="target" id="target"></div>
-    <div class="msg" id="camMsg">Tap “Start camera” to begin.<br>Point at a white or gray surface for the best reading.</div>
-  </div>
-
-  <div class="row">
-    <button class="primary" id="btnStart">Start camera</button>
-    <button id="btnFlip">Flip</button>
-    <button id="btnHold">Hold</button>
-  </div>
-
-  <div class="readouts" style="margin-top:12px">
-    <div class="read big">
-      <div class="label">Color temp</div>
-      <div class="value" id="rdK">—</div>
-      <div class="sub" id="rdKsub">Kelvin</div>
+  <div class="hero">
+    <div class="camera" id="camera">
+      <video id="video" playsinline muted autoplay></video>
+      <div class="target" id="target"></div>
+      <div class="msg" id="camMsg"></div>
     </div>
-    <div class="read">
-      <div class="label">Tint</div>
-      <div class="value" id="rdTint" style="font-size:24px">—</div>
-      <div class="sub" id="rdTintSub">&nbsp;</div>
-    </div>
-    <div class="read">
-      <div class="label">Bright</div>
-      <div class="value" id="rdLum" style="font-size:24px">—</div>
-      <div class="sub">of max</div>
-    </div>
-  </div>
+    <button class="startbtn" id="btnStart">Start camera</button>
 
-  <div class="card">
-    <div class="swatch"><i id="swatchPin" style="left:50%"></i></div>
-    <div class="grid2" style="margin-top:6px;font-size:11px;color:var(--muted)">
-      <span>2000K warm</span><span style="text-align:right">10000K cool</span>
+    <div class="hudtop">
+      <div class="brand">TempScout</div>
+      <div class="quality" id="quality">Point at a white or gray card</div>
+    </div>
+
+    <div class="panel">
+      <div class="toolbar">
+        <button id="tbArea" aria-label="Measure area"><svg viewBox="0 0 24 24"><path d="M4 9V5h4M20 9V5h-4M4 15v4h4M20 15v4h-4"/><circle cx="12" cy="12" r="1.6"/></svg></button>
+        <button id="tbRef" aria-label="Set reference"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7.5"/></svg></button>
+        <button id="tbSave" aria-label="Save reading"><svg viewBox="0 0 24 24"><path d="M7 4h10v16l-5-3.5L7 20z"/></svg></button>
+        <button id="tbSettings" aria-label="Settings"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg></button>
+      </div>
+
+      <div class="bigread">
+        <div class="kval"><span id="rdK">—</span></div>
+        <div class="tint"><b id="rdTint">—</b><small id="rdTintSub">&nbsp;</small></div>
+      </div>
+      <div class="kdesc" id="rdKsub">Kelvin</div>
+
+      <div class="chips">
+        <div><span>Bright</span><b id="rdLum">—</b></div>
+        <div><span>WB</span><b id="chipWB">Auto</b></div>
+        <div><span>Cal</span><b id="chipCal">None</b></div>
+      </div>
+
+      <div class="scale">
+        <div class="ticks"><span>2,000</span><span>3,000</span><span>4,000</span><span>5,000</span><span>6,000</span><span>7,000</span><span>8,000</span></div>
+        <div class="bar kbar"><i id="swatchPin" style="left:50%"></i></div>
+      </div>
+      <div class="scale tintscale">
+        <div class="ticks"><span>G+10</span><span>G+5</span><span>0</span><span>M-5</span><span>M-10</span></div>
+        <div class="bar tbar"><i id="tintPin" style="left:50%"></i></div>
+      </div>
+
+      <div class="shutterrow">
+        <button class="side" id="btnFlip" aria-label="Flip camera"><svg viewBox="0 0 24 24"><path d="M4 8h12l-3-3M20 16H8l3 3"/></svg></button>
+        <button class="shutter" id="btnHold" aria-label="Measure"><i></i></button>
+        <div class="side text" id="shutterText">Measure</div>
+      </div>
     </div>
   </div>
 
@@ -218,13 +299,14 @@
 
   <div class="card">
     <h3>Calibrate (optional)</h3>
-    <div class="note" style="margin-top:0">If the phone won’t let the app lock white balance, readings are estimates. If you have a real meter, or a known light (e.g. a 5600K panel), enter its value here while pointing at that light. The app will correct all readings to match. Recalibrate after changing the white balance lock.</div>
+    <div class="note" style="margin-top:0">The phone’s automatic white balance squashes the colour range, so readings are estimates until calibrated. Point at a light of known Kelvin (a bulb’s label, a panel, a real meter), tap “Measure”, type its Kelvin, and tap “Add calibration point”. <b>Use two lights, one warm (e.g. a 2700K bulb) and one cool (e.g. 5600K)</b>, and the app fits a curve that stays accurate across the range. Redo it after changing the white balance lock.</div>
     <label class="field">Known Kelvin</label>
     <input type="number" id="calK" placeholder="5600" inputmode="numeric">
     <div class="row">
-      <button id="btnCal">Calibrate to this</button>
+      <button id="btnCal">Add calibration point</button>
       <button id="btnCalReset">Reset</button>
     </div>
+    <div id="calList"></div>
     <div class="note" id="calInfo"></div>
   </div>
 </section>
@@ -336,6 +418,8 @@ document.querySelectorAll('nav button').forEach(btn => {
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     btn.classList.add('active');
     $('view-' + btn.dataset.view).classList.add('active');
+    document.body.dataset.view = btn.dataset.view;
+    window.scrollTo(0, 0);
     if (btn.dataset.view === 'lib') renderLibrary();
   });
 });
@@ -376,7 +460,6 @@ const video = $('video');
 let stream = null;
 let facing = 'environment';        // back camera. 'user' = front camera.
 let held = false;                  // is the reading frozen?
-let calOffsetMired = load('ts_cal', 0);
 let reference = load('ts_ref', null);
 let current = null;                // the latest reading {k, tint, lum}
 
@@ -389,9 +472,8 @@ const frameCtx  = frameCanvas.getContext('2d',  { willReadFrequently: true });
 function stopMeterCamera() {
   if (stream) stream.getTracks().forEach(t => t.stop());
   stream = null; video.srcObject = null;
-  $('camMsg').style.display = 'flex';
-  $('camMsg').innerHTML = 'Tap “Start camera” to begin.<br>Point at a white or gray surface for the best reading.';
-  $('btnStart').textContent = 'Start camera';
+  $('camMsg').style.display = 'none'; $('camMsg').innerHTML = '';
+  $('btnStart').textContent = 'Start camera'; $('btnStart').style.display = '';
 }
 
 async function startCamera() {
@@ -405,9 +487,10 @@ async function startCamera() {
     video.srcObject = stream;
     video.classList.toggle('mirror', facing === 'user');
     $('camMsg').style.display = 'none';
-    $('btnStart').textContent = 'Camera on';
+    $('btnStart').textContent = 'Camera on'; $('btnStart').style.display = 'none';
     setupWhiteBalance();
   } catch (err) {
+    $('btnStart').style.display = '';
     $('camMsg').style.display = 'flex';
     $('camMsg').innerHTML = 'Couldn’t open the camera.<br><br>' +
       'Make sure the page is opened from a secure (https) link in Safari and that camera access is allowed in Settings → Safari → Camera.';
@@ -489,15 +572,35 @@ $('wbSlider').addEventListener('input', e => {
   if (wb.locked) applyWB(true);
 });
 
+function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), 1600); }
 $('btnStart').addEventListener('click', startCamera);
+// panel toolbar: each button reuses an existing control
+$('tbArea').addEventListener('click', () => {
+  const sizes = [10, 20, 35, 50], cur = +$('areaSize').value;
+  const next = sizes.find(v => v > cur) || sizes[0];
+  $('areaSize').value = next; $('areaSize').dispatchEvent(new Event('input'));
+  toast('Measure area ' + next + '%');
+});
+$('tbRef').addEventListener('click', () => { if (!current || !current.k) return toast('Start the camera first'); $('btnRef').click(); toast('Reference set to ' + current.k + 'K'); });
+$('tbSave').addEventListener('click', () => { $('btnSave').click(); });
+$('tbSettings').addEventListener('click', () => { document.querySelector('#view-meter > .card').scrollIntoView({ behavior: 'smooth' }); });
 $('btnFlip').addEventListener('click', () => {
   facing = facing === 'environment' ? 'user' : 'environment';
   startCamera();
 });
+// "Measure" averages 30 frames for a steadier, repeatable number, then freezes it. Tap again to resume live.
+let sampling = null;                 // {n, sum:{r,g,b}, mired:[]} while measuring
+function setHold(on) {
+  held = on;
+  $('btnHold').classList.toggle('on', held); $('btnHold').classList.remove('busy');
+  $('shutterText').textContent = held ? 'Resume' : 'Measure';
+}
 $('btnHold').addEventListener('click', () => {
-  held = !held;
-  $('btnHold').classList.toggle('on', held);
-  $('btnHold').textContent = held ? 'Held' : 'Hold';
+  if (held) return setHold(false);
+  if (sampling) return;
+  if (!stream) return alert('Start the camera first.');
+  sampling = { n: 0, sum: { r: 0, g: 0, b: 0 }, mired: [] };
+  $('btnHold').classList.add('busy'); $('shutterText').textContent = 'Measuring…';
 });
 
 // The measure-area slider changes the size of the white square
@@ -511,41 +614,109 @@ $('areaSize').addEventListener('input', e => {
   $('target').style.width = v + '%';
 })();
 
-// Keep a smoothed average so numbers don't flicker
-let avg = null;
+// Keep a smoothed average so numbers don't flicker (averaged in linear light, like real light adds up)
+let avg = null;                      // smoothed colour as ordinary 0-255 RGB (used by calibration + saving)
+let linAvg = null;                   // the same, in linear light
+const toSRGB = c => 255 * (c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(Math.max(c, 0), 1 / 2.4) - 0.055);
 function smooth(prev, next, a) { return prev === null ? next : prev + (next - prev) * a; }
+const kHist = [];                    // recent per-frame readings (mired), to tell whether the reading is steady
+
+/* ---------- Calibration curve ----------
+   Automatic white balance squashes the range of colours, so one fixed shift only fits near the light you
+   calibrated on. With two or more known lights we fit  true = a × measured + b  (in mireds). */
+let calPoints = load('ts_cal_pts', []);          // [{m: what the camera said (mired), t: the truth (mired)}]
+const calLegacy = load('ts_cal', 0);             // single shift saved by older versions; used until a point is added
+function calFit() {
+  const n = calPoints.length;
+  if (!n) return { a: 1, b: calLegacy, n: 0 };
+  const mx = calPoints.reduce((q, p) => q + p.m, 0) / n, my = calPoints.reduce((q, p) => q + p.t, 0) / n;
+  const sxx = calPoints.reduce((q, p) => q + (p.m - mx) ** 2, 0), sxy = calPoints.reduce((q, p) => q + (p.m - mx) * (p.t - my), 0);
+  if (n === 1 || sxx < 25) return { a: 1, b: my - mx, n };       // lights too similar to fit a slope
+  const a = Math.max(0.5, Math.min(2, sxy / sxx));
+  return { a, b: my - a * mx, n };
+}
+function calibratedMired(rawK) {                  // camera's raw Kelvin -> true mired
+  const f = calFit();
+  return Math.max(80, Math.min(700, f.a * (mired(rawK) + wbOffsetMired()) + f.b));
+}
+
+// Average colour inside the measure square, in linear light. Also notes whether it is clipped.
+function readRegion() {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw) return null;
+  // The video fills the box using "cover", so the square maps onto the middle of the frame.
+  const box = $('camera').getBoundingClientRect(), tr = $('target').getBoundingClientRect();
+  const scale = Math.max(box.width / vw, box.height / vh);          // how much video was enlarged
+  const side = tr.width / scale;                                      // square size in video pixels
+  // the square sits above the control panel, so find where it is on screen and map that back to the video
+  const cx = vw / 2 + (tr.left + tr.width / 2 - box.left - box.width / 2) / scale;
+  const cy = vh / 2 + (tr.top + tr.height / 2 - box.top - box.height / 2) / scale;
+  const sx = cx - side / 2, sy = cy - side / 2;
+  regionCtx.drawImage(video, sx, sy, side, side, 0, 0, 32, 32);
+  const d = regionCtx.getImageData(0, 0, 32, 32).data;
+  const lin = { r: 0, g: 0, b: 0 }; let hi = 0, n = d.length / 4;
+  for (let i = 0; i < d.length; i += 4) {
+    lin.r += toLinear(d[i]); lin.g += toLinear(d[i + 1]); lin.b += toLinear(d[i + 2]);
+    hi += (d[i] >= 250 || d[i + 1] >= 250 || d[i + 2] >= 250) ? 1 : 0;
+  }
+  lin.r /= n; lin.g /= n; lin.b /= n;
+  return { lin, clipped: hi / n > 0.1 };
+}
+
+// Colour (linear light) -> reading
+function readingFrom(lin) {
+  const r = toSRGB(lin.r), g = toSRGB(lin.g), b = toSRGB(lin.b);
+  const rawK = rgbToKelvin(r, g, b);
+  const m = rawK ? calibratedMired(rawK) : null;
+  const lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+  const tint = ((g - (r + b) / 2) / Math.max(1, (r + g + b) / 3)) * 100;
+  return { r, g, b, m, k: m ? 1e6 / m : null, lum, tint };
+}
+
+const roundK = k => Math.round(k / 50) * 50;      // the camera is not good to 10K, so don't pretend it is
+const sd = a => { const mu = a.reduce((x, y) => x + y, 0) / a.length; return Math.sqrt(a.reduce((x, y) => x + (y - mu) ** 2, 0) / a.length); };
+
+function setQuality(text, cls) { const q = $('quality'); q.textContent = text; q.className = 'quality ' + (cls || ''); }
 
 function measure() {
   if (!stream || video.readyState < 2 || held) return;
-  const vw = video.videoWidth, vh = video.videoHeight;
-  if (!vw) return;
+  const reg = readRegion();
+  if (!reg) return;
 
   // --- 1. Measure the colour inside the white square ---
-  // The video fills the box using "cover", so the square maps onto the middle of the frame.
-  const box = $('camera').getBoundingClientRect();
-  const scale = Math.max(box.width / vw, box.height / vh);          // how much video was enlarged
-  const sizePx = (parseFloat($('areaSize').value) / 100) * box.width; // square size on screen
-  const side = sizePx / scale;                                        // square size in video pixels
-  const sx = vw / 2 - side / 2, sy = vh / 2 - side / 2;
-  regionCtx.drawImage(video, sx, sy, side, side, 0, 0, 32, 32);
-  const d = regionCtx.getImageData(0, 0, 32, 32).data;
-  let r = 0, g = 0, b = 0, n = d.length / 4;
-  for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; }
-  r /= n; g /= n; b /= n;
+  const frame = readingFrom(reg.lin);               // this frame on its own
+  if (frame.m) { kHist.push(frame.m); if (kHist.length > 10) kHist.shift(); }
 
-  if (!avg) avg = { r, g, b };
-  avg.r = smooth(avg.r, r, 0.25); avg.g = smooth(avg.g, g, 0.25); avg.b = smooth(avg.b, b, 0.25);
-
-  let k = rgbToKelvin(avg.r, avg.g, avg.b);
-  if (k !== null) {
-    // apply calibration offset (done in mireds so it behaves evenly)
-    k = 1e6 / (mired(k) + wbOffsetMired() + calOffsetMired);
-    k = Math.max(1500, Math.min(12000, k));
+  if (sampling) {                                   // "Measure": collect frames, then finish
+    sampling.n++; sampling.sum.r += reg.lin.r; sampling.sum.g += reg.lin.g; sampling.sum.b += reg.lin.b;
+    if (frame.m) sampling.mired.push(frame.m);
+    $('shutterText').textContent = 'Measuring ' + Math.max(0, Math.ceil((30 - sampling.n) / 10)) + 's';
+    if (sampling.n >= 30) {
+      const n = sampling.n, lin = { r: sampling.sum.r / n, g: sampling.sum.g / n, b: sampling.sum.b / n };
+      const res = readingFrom(lin);
+      linAvg = lin; avg = { r: res.r, g: res.g, b: res.b };
+      const spreadM = sampling.mired.length ? sd(sampling.mired) : 0;
+      const spreadK = res.k ? Math.round(Math.abs(res.k - 1e6 / (res.m + spreadM)) / 10) * 10 : 0;
+      current = { k: res.k ? roundK(res.k) : null, tint: Math.round(res.tint * 10) / 10, lum: Math.round(res.lum * 100), rgb: [res.r, res.g, res.b].map(Math.round), spread: spreadK };
+      sampling = null; setHold(true);
+      setQuality(spreadK > 300 ? 'Frames disagreed (±' + spreadK + 'K) — hold steadier, retry' : 'Measured: 30-frame average ✓', spreadK > 300 ? 'warn' : 'good');
+      updateReadouts();
+      return;
+    }
   }
-  const lum = (0.2126 * avg.r + 0.7152 * avg.g + 0.0722 * avg.b) / 255;
-  const tint = ((avg.g - (avg.r + avg.b) / 2) / Math.max(1, (avg.r + avg.g + avg.b) / 3)) * 100;
 
-  current = { k: k ? Math.round(k / 10) * 10 : null, tint: Math.round(tint * 10) / 10, lum: Math.round(lum * 100), rgb: [avg.r, avg.g, avg.b].map(Math.round) };
+  if (!linAvg) linAvg = { ...reg.lin };
+  linAvg.r = smooth(linAvg.r, reg.lin.r, 0.25); linAvg.g = smooth(linAvg.g, reg.lin.g, 0.25); linAvg.b = smooth(linAvg.b, reg.lin.b, 0.25);
+  const res = readingFrom(linAvg);
+  avg = { r: res.r, g: res.g, b: res.b };
+  current = { k: res.k ? roundK(res.k) : null, tint: Math.round(res.tint * 10) / 10, lum: Math.round(res.lum * 100), rgb: [res.r, res.g, res.b].map(Math.round) };
+
+  // live hint: is this a trustworthy reading?
+  if (reg.clipped || res.lum > 0.95) setQuality('Too bright — tilt away or step back', 'warn');
+  else if (res.lum < 0.08) setQuality('Too dark — move into more light', 'warn');
+  else if (kHist.length >= 10 && sd(kHist) > 15) setQuality('Moving — hold steady', 'warn');
+  else if (kHist.length >= 10 && sd(kHist) > 6) setQuality('Settling…');
+  else setQuality('Steady ✓ Tap the shutter to average', 'good');
 
   // --- 2. Histogram of the whole frame ---
   frameCtx.drawImage(video, 0, 0, 96, 96);
@@ -562,9 +733,12 @@ function measure() {
 function updateReadouts() {
   if (!current) return;
   const c = current;
-  $('rdK').textContent = c.k ? c.k + 'K' : '—';
+  $('rdK').textContent = c.k ? c.k.toLocaleString('en-US') + 'K' : '—';
   $('rdLum').textContent = c.lum + '%';
 
+  $('tintPin').style.left = 50 - Math.max(-10, Math.min(10, c.tint)) * 5 + '%';      // green on the left, magenta on the right
+  $('chipWB').textContent = wb.locked ? wb.kelvin + 'K' : 'Auto';
+  $('chipCal').textContent = calPoints.length ? calPoints.length + (calPoints.length > 1 ? ' pts' : ' pt') : (calLegacy ? 'Shift' : 'None');
   if (Math.abs(c.tint) < 0.8) { $('rdTint').textContent = 'Neutral'; $('rdTintSub').textContent = ''; }
   else {
     $('rdTint').textContent = (c.tint > 0 ? '+' : '') + c.tint;
@@ -575,9 +749,8 @@ function updateReadouts() {
   if (c.k) {
     let word = c.k < 2800 ? 'Candle / tungsten glow' : c.k < 3500 ? 'Warm tungsten' : c.k < 4500 ? 'Warm white'
       : c.k < 5200 ? 'Neutral white' : c.k < 6000 ? 'Daylight' : c.k < 7500 ? 'Overcast / cool' : 'Shade / blue sky';
-    $('rdKsub').textContent = word;
-    const pct = (Math.max(2000, Math.min(10000, c.k)) - 2000) / 8000 * 100;
-    $('swatchPin').style.left = pct + '%';
+    $('rdKsub').textContent = word + (c.spread ? ' · ±' + c.spread + 'K' : '');
+    $('swatchPin').style.left = (Math.max(2000, Math.min(8000, c.k)) - 2000) / 6000 * 100 + '%';
   }
 
   // Compare against the reference, if there is one
@@ -623,20 +796,32 @@ $('btnClearRef').addEventListener('click', () => {
 });
 
 function showCalInfo() {
-  $('calInfo').textContent = calOffsetMired
-    ? 'Calibration active (' + (calOffsetMired > 0 ? '+' : '') + Math.round(calOffsetMired) + ' mired shift).'
-    : 'No calibration applied.';
+  const f = calFit();
+  $('calList').innerHTML = calPoints.map((p, i) =>
+    '<div class="calpt"><span>Truth <b>' + Math.round(1e6 / p.t) + 'K</b> · camera said ' + Math.round(1e6 / p.m) + 'K</span><button data-del="' + i + '">×</button></div>').join('');
+  $('calInfo').textContent = f.n >= 2
+    ? 'Calibration curve from ' + f.n + ' lights (slope ' + f.a.toFixed(2) + '). Readings should now hold up from warm to cool.'
+    : f.n === 1 ? 'One point: readings are shifted by ' + Math.round(f.b) + ' mired. Add a second light, warm or cool from the first, to fit a curve.'
+    : calLegacy ? 'Old single calibration active (' + (calLegacy > 0 ? '+' : '') + Math.round(calLegacy) + ' mired shift).' : 'No calibration applied.';
 }
 $('btnCal').addEventListener('click', () => {
   const known = parseFloat($('calK').value);
-  if (!known || !avg) return alert('Start the camera, point at your known light, and enter its Kelvin value.');
+  if (!known || !avg) return alert('Start the camera, point at your known light, tap “Measure”, and enter its Kelvin value.');
   const raw = rgbToKelvin(avg.r, avg.g, avg.b);
   if (!raw) return alert('Too dark to calibrate.');
-  calOffsetMired = mired(known) - mired(raw) - wbOffsetMired();
-  store('ts_cal', calOffsetMired);
+  const pt = { m: mired(raw) + wbOffsetMired(), t: mired(known) };
+  // re-measuring a light you already added replaces that point instead of piling up
+  calPoints = calPoints.filter(p => Math.abs(p.t - pt.t) > 8);
+  calPoints.push(pt);
+  if (calPoints.length > 4) calPoints.shift();
+  store('ts_cal_pts', calPoints);
   showCalInfo();
 });
-$('btnCalReset').addEventListener('click', () => { calOffsetMired = 0; store('ts_cal', 0); showCalInfo(); });
+$('calList').addEventListener('click', e => {
+  if (e.target.dataset.del === undefined) return;
+  calPoints.splice(+e.target.dataset.del, 1); store('ts_cal_pts', calPoints); showCalInfo();
+});
+$('btnCalReset').addEventListener('click', () => { calPoints = []; store('ts_cal_pts', []); store('ts_cal', 0); location.reload(); });
 showCalInfo();
 
 /* ==================================================================
@@ -654,7 +839,7 @@ function saveShot(lat, lng) {
   });
   store('ts_shots', shots);
   $('noteInput').value = '';
-  $('btnSave').textContent = 'Saved ✓';
+  $('btnSave').textContent = 'Saved ✓'; toast('Saved to library');
   setTimeout(() => $('btnSave').textContent = 'Save to library', 1200);
 }
 
