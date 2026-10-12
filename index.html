@@ -113,6 +113,14 @@
   .sunrow:first-of-type { border-top: 0; }
   .sunrow span:first-child { color: var(--muted); }
 
+  .camera.sunview { aspect-ratio: 3 / 4; max-height: 62vh; }
+  .camera.sunview canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .sunguide { font-size: 20px; font-weight: 700; text-align: center; margin-top: 10px; color: var(--warm); min-height: 26px; }
+  .sunstats { margin-top: 8px; }
+  .sunstats div { background: var(--panel-2); border-radius: 12px; padding: 8px 10px; }
+  .sunstats span { display: block; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+  .sunstats b { font-variant-numeric: tabular-nums; font-size: 15px; }
+
   /* ---------- Bottom tab bar ---------- */
   nav {
     position: fixed; left: 0; right: 0; bottom: 0;
@@ -199,8 +207,18 @@
   </div>
 
   <div class="card">
+    <h3>White balance</h3>
+    <div class="note" style="margin-top:0" id="wbStatus">Start the camera to check whether this phone lets the app lock white balance.</div>
+    <div id="wbControls" style="display:none">
+      <label class="field" id="wbLabel">Locked at 5500K</label>
+      <input type="range" id="wbSlider" min="2500" max="8000" step="100" value="5500">
+      <div class="row"><button id="btnWB">Lock white balance</button></div>
+    </div>
+  </div>
+
+  <div class="card">
     <h3>Calibrate (optional)</h3>
-    <div class="note" style="margin-top:0">iPhone cameras auto-adjust white balance, so readings are estimates. If you have a real meter, or a known light (e.g. a 5600K panel), enter its value here while pointing at that light. The app will correct all readings to match.</div>
+    <div class="note" style="margin-top:0">If the phone won’t let the app lock white balance, readings are estimates. If you have a real meter, or a known light (e.g. a 5600K panel), enter its value here while pointing at that light. The app will correct all readings to match. Recalibrate after changing the white balance lock.</div>
     <label class="field">Known Kelvin</label>
     <input type="number" id="calK" placeholder="5600" inputmode="numeric">
     <div class="row">
@@ -258,6 +276,25 @@
      ============================================================ -->
 <section class="view" id="view-sun">
   <div class="card">
+    <h3>Sun finder</h3>
+    <div class="camera sunview" id="sunCam">
+      <video id="sunVideo" playsinline muted autoplay></video>
+      <canvas id="sunCanvas"></canvas>
+      <div class="msg" id="sunMsg">Tap “Start sun finder”, then hold your phone up and sweep it around the sky.</div>
+    </div>
+    <div class="sunguide" id="sunGuide">&nbsp;</div>
+    <div class="grid2 sunstats">
+      <div><span>Sun</span><b id="sunNow">—</b></div>
+      <div><span>Phone points</span><b id="sunAim">—</b></div>
+    </div>
+    <div class="row">
+      <button class="primary" id="btnSunStart">Start sun finder</button>
+      <button id="btnSunAlign">Align to sun</button>
+    </div>
+    <div class="note" id="sunNote">Dotted arc = today’s sun path (labels are hours). Compasses drift near metal and speakers; if the marker looks off, point the center cross at the real sun (don’t stare at it, use a shadow or the glare) and tap “Align to sun”.</div>
+  </div>
+
+  <div class="card">
     <h3>Sun times (approximate)</h3>
     <div class="row" style="margin-top:0"><button class="primary" id="btnLoc">Use my location</button></div>
     <div class="note" id="sunStatus">Tap the button to get today’s sunrise, golden hour, and sunset for where you are.</div>
@@ -292,6 +329,7 @@ function load(key, fallback) {
    ================================================================== */
 document.querySelectorAll('nav button').forEach(btn => {
   btn.addEventListener('click', () => {
+    if (btn.dataset.view !== 'sun') stopSunFinder();     // free the camera + sensors when leaving
     document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     btn.classList.add('active');
@@ -346,8 +384,17 @@ const frameCanvas  = document.createElement('canvas'); frameCanvas.width = frame
 const regionCtx = regionCanvas.getContext('2d', { willReadFrequently: true });
 const frameCtx  = frameCanvas.getContext('2d',  { willReadFrequently: true });
 
+function stopMeterCamera() {
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = null; video.srcObject = null;
+  $('camMsg').style.display = 'flex';
+  $('camMsg').innerHTML = 'Tap “Start camera” to begin.<br>Point at a white or gray surface for the best reading.';
+  $('btnStart').textContent = 'Start camera';
+}
+
 async function startCamera() {
   if (stream) stream.getTracks().forEach(t => t.stop());
+  stopSunFinder();                                   // only one page camera at a time
   try {
     stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 720 } },
@@ -357,12 +404,88 @@ async function startCamera() {
     video.classList.toggle('mirror', facing === 'user');
     $('camMsg').style.display = 'none';
     $('btnStart').textContent = 'Camera on';
+    setupWhiteBalance();
   } catch (err) {
     $('camMsg').style.display = 'flex';
     $('camMsg').innerHTML = 'Couldn’t open the camera.<br><br>' +
       'Make sure the page is opened from a secure (https) link in Safari and that camera access is allowed in Settings → Safari → Camera.';
   }
 }
+
+/* ------------------------------------------------------------------
+   WHITE BALANCE LOCK
+   By default the phone keeps "fixing" the colour of the picture, which
+   hides exactly what we are trying to measure. Browsers can ask the
+   camera to hold a fixed white balance (whiteBalanceMode: 'manual'),
+   but only some phones/browsers allow it (Chrome on Android does;
+   iPhone Safari currently does not expose it). We check what this
+   camera offers and say so honestly.
+
+   When locked at T kelvin, a light of exactly T renders as neutral grey,
+   which the maths reads as ~6504K. So we shift readings by the
+   difference in mireds to get back to the real light colour.
+   ------------------------------------------------------------------ */
+const D65_K = 6504;
+let wb = { supported: false, locked: false, kelvin: load('ts_wb_k', 5500), wantLock: load('ts_wb_lock', true) };
+
+function wbOffsetMired() { return wb.locked ? mired(wb.kelvin) - mired(D65_K) : 0; }
+
+function wbTrack() { return stream && stream.getVideoTracks()[0]; }
+
+async function applyWB(lock) {
+  const track = wbTrack();
+  if (!track) return;
+  try {
+    await track.applyConstraints({ advanced: [lock
+      ? { whiteBalanceMode: 'manual', colorTemperature: wb.kelvin }
+      : { whiteBalanceMode: 'continuous' }] });
+  } catch (e) { /* checked below via getSettings */ }
+  const s = track.getSettings ? track.getSettings() : {};
+  wb.locked = lock ? s.whiteBalanceMode === 'manual' : false;
+  if (wb.locked && typeof s.colorTemperature === 'number') wb.kelvin = Math.round(s.colorTemperature);
+  renderWB(lock && !wb.locked);
+}
+
+function setupWhiteBalance() {
+  const track = wbTrack();
+  const caps = track && track.getCapabilities ? track.getCapabilities() : {};
+  wb.supported = Array.isArray(caps.whiteBalanceMode) && caps.whiteBalanceMode.includes('manual');
+  wb.locked = false;
+  if (wb.supported && caps.colorTemperature) {
+    $('wbSlider').min = caps.colorTemperature.min; $('wbSlider').max = caps.colorTemperature.max;
+    $('wbSlider').step = caps.colorTemperature.step || 100;
+    wb.kelvin = Math.max(caps.colorTemperature.min, Math.min(caps.colorTemperature.max, wb.kelvin));
+  }
+  if (wb.supported && wb.wantLock) applyWB(true); else renderWB(false);
+}
+
+function renderWB(lockFailed) {
+  $('wbControls').style.display = wb.supported ? 'block' : 'none';
+  $('btnWB').textContent = wb.locked ? 'Unlock (auto white balance)' : 'Lock white balance';
+  $('btnWB').classList.toggle('on', wb.locked);
+  $('wbSlider').value = wb.kelvin;
+  $('wbLabel').textContent = (wb.locked ? 'Locked at ' : 'Lock at ') + wb.kelvin + 'K';
+  if (!wb.supported) {
+    $('wbStatus').innerHTML = '<b>Not available on this phone/browser.</b> The camera is stuck on automatic white balance and the page can’t turn it off (iPhone Safari doesn’t expose that control). Readings stay estimates. Use “Calibrate” below against a light of known Kelvin; for true readings you’d need a native app.';
+  } else if (lockFailed) {
+    $('wbStatus').innerHTML = '<b>Lock was refused</b> by the camera. Readings stay on automatic white balance.';
+  } else if (wb.locked) {
+    $('wbStatus').innerHTML = '<b>White balance locked.</b> Readings are corrected for the ' + wb.kelvin + 'K setting (' +
+      Math.round(wbOffsetMired()) + ' mired). Set the slider close to the light you expect for the most accurate result.';
+  } else {
+    $('wbStatus').innerHTML = '<b>Automatic white balance is on.</b> Tap “Lock white balance” for a true reading.';
+  }
+}
+
+$('btnWB').addEventListener('click', () => {
+  wb.wantLock = !wb.locked; store('ts_wb_lock', wb.wantLock);
+  applyWB(wb.wantLock);
+});
+$('wbSlider').addEventListener('input', e => {
+  wb.kelvin = +e.target.value; store('ts_wb_k', wb.kelvin);
+  $('wbLabel').textContent = (wb.locked ? 'Locked at ' : 'Lock at ') + wb.kelvin + 'K';
+  if (wb.locked) applyWB(true);
+});
 
 $('btnStart').addEventListener('click', startCamera);
 $('btnFlip').addEventListener('click', () => {
@@ -414,7 +537,7 @@ function measure() {
   let k = rgbToKelvin(avg.r, avg.g, avg.b);
   if (k !== null) {
     // apply calibration offset (done in mireds so it behaves evenly)
-    k = 1e6 / (mired(k) + calOffsetMired);
+    k = 1e6 / (mired(k) + wbOffsetMired() + calOffsetMired);
     k = Math.max(1500, Math.min(12000, k));
   }
   const lum = (0.2126 * avg.r + 0.7152 * avg.g + 0.0722 * avg.b) / 255;
@@ -507,7 +630,7 @@ $('btnCal').addEventListener('click', () => {
   if (!known || !avg) return alert('Start the camera, point at your known light, and enter its Kelvin value.');
   const raw = rgbToKelvin(avg.r, avg.g, avg.b);
   if (!raw) return alert('Too dark to calibrate.');
-  calOffsetMired = mired(known) - mired(raw);
+  calOffsetMired = mired(known) - mired(raw) - wbOffsetMired();
   store('ts_cal', calOffsetMired);
   showCalInfo();
 });
@@ -665,25 +788,293 @@ function sunEvent(date, lat, lng, rising, zenith) {
   return new Date(base + UT * 3600000);
 }
 
+function showSunTimes(lat, lng) {
+  const today = new Date();
+  const fmt = d => d ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—';
+  const rows = [
+    ['First light',          sunEvent(today, lat, lng, true, 96)],
+    ['Sunrise',              sunEvent(today, lat, lng, true, 90.833)],
+    ['Morning golden hour ends', sunEvent(today, lat, lng, true, 84)],
+    ['Evening golden hour starts', sunEvent(today, lat, lng, false, 84)],
+    ['Sunset',               sunEvent(today, lat, lng, false, 90.833)],
+    ['Last light',           sunEvent(today, lat, lng, false, 96)]
+  ];
+  $('sunRows').innerHTML = rows.map(r => '<div class="sunrow"><span>' + r[0] + '</span><span>' + fmt(r[1]) + '</span></div>').join('');
+  $('sunStatus').textContent = 'For ' + lat.toFixed(2) + ', ' + lng.toFixed(2) + ' · ' + today.toLocaleDateString();
+}
+
 $('btnLoc').addEventListener('click', () => {
   $('sunStatus').textContent = 'Finding your location…';
   navigator.geolocation.getCurrentPosition(pos => {
-    const { latitude: lat, longitude: lng } = pos.coords;
-    const today = new Date();
-    const fmt = d => d ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—';
-    const rows = [
-      ['First light',          sunEvent(today, lat, lng, true, 96)],
-      ['Sunrise',              sunEvent(today, lat, lng, true, 90.833)],
-      ['Morning golden hour ends', sunEvent(today, lat, lng, true, 84)],
-      ['Evening golden hour starts', sunEvent(today, lat, lng, false, 84)],
-      ['Sunset',               sunEvent(today, lat, lng, false, 90.833)],
-      ['Last light',           sunEvent(today, lat, lng, false, 96)]
-    ];
-    $('sunRows').innerHTML = rows.map(r => '<div class="sunrow"><span>' + r[0] + '</span><span>' + fmt(r[1]) + '</span></div>').join('');
-    $('sunStatus').textContent = 'For ' + lat.toFixed(2) + ', ' + lng.toFixed(2) + ' · ' + today.toLocaleDateString();
+    showSunTimes(pos.coords.latitude, pos.coords.longitude);
   }, () => {
     $('sunStatus').textContent = 'Couldn’t get your location. Allow location access for Safari and try again.';
   }, { timeout: 8000 });
+});
+
+/* ==================================================================
+   SUN FINDER
+   Shows where the sun is, on top of the live camera picture.
+   1. Work out the sun's compass direction (azimuth) and height above
+      the horizon (altitude) for your place and time.
+   2. Read the phone's sensors to know where the back camera points.
+   3. Project the sun into the picture (or draw an arrow toward it).
+   ================================================================== */
+const sunCanvas = $('sunCanvas'), sctx = sunCanvas.getContext('2d');
+const sunVideo = $('sunVideo');
+let sunStream = null, sunRunning = false, sunRaf = 0, sunTick = 0;
+let sunLoc = null;                       // {lat, lng}
+let sunPath = [], sunPathDay = '';       // today's path, for the dotted arc
+let sunNowPos = null;                    // {az, alt} right now
+let azOffset = 0;                        // compass correction set by "Align to sun"
+let sensorSeen = false, sensorAbsolute = false;
+const HFOV_LONG_SIDE = 65;               // approx. field of view of the main camera along its long side (degrees)
+
+// Sun's position in the sky (NOAA-style, good to well under a degree)
+function sunPosition(date, lat, lng) {
+  const n = date.getTime() / 86400000 + 2440587.5 - 2451545.0;     // days since J2000
+  const L = mod(280.460 + 0.9856474 * n, 360);
+  const g = mod(357.528 + 0.9856003 * n, 360) * rad;
+  const lambda = (L + 1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) * rad;
+  const eps = (23.439 - 0.0000004 * n) * rad;
+  const ra = Math.atan2(Math.cos(eps) * Math.sin(lambda), Math.cos(lambda));
+  const dec = Math.asin(Math.sin(eps) * Math.sin(lambda));
+  const H = (mod(280.46061837 + 360.98564736629 * n + lng, 360) * rad) - ra;   // hour angle
+  const la = lat * rad;
+  const alt = Math.asin(Math.sin(la) * Math.sin(dec) + Math.cos(la) * Math.cos(dec) * Math.cos(H));
+  const az = Math.atan2(Math.sin(H), Math.cos(H) * Math.sin(la) - Math.tan(dec) * Math.cos(la)) * deg + 180;
+  return { az: mod(az, 360), alt: alt * deg };
+}
+
+function buildSunPath() {
+  sunPath = []; sunPathDay = new Date().toDateString();
+  if (!sunLoc) return;
+  const d0 = new Date(); d0.setHours(0, 0, 0, 0);
+  for (let m = 0; m < 1440; m += 10) {
+    const p = sunPosition(new Date(d0.getTime() + m * 60000), sunLoc.lat, sunLoc.lng);
+    sunPath.push({ az: p.az, alt: p.alt, hour: m % 60 === 0 ? m / 60 : null });
+  }
+}
+
+/* ---------- Phone orientation ---------- */
+// smoothed angles stored as sin/cos so 359° -> 1° doesn't jump
+const ang = { a: null, b: null, g: null };
+function smoothAngle(key, degVal, k) {
+  const s = Math.sin(degVal * rad), c = Math.cos(degVal * rad);
+  const p = ang[key];
+  ang[key] = p ? { s: p.s + (s - p.s) * k, c: p.c + (c - p.c) * k } : { s, c };
+}
+const angDeg = key => Math.atan2(ang[key].s, ang[key].c) * deg;
+
+function onOrientation(e) {
+  if (e.beta == null || e.gamma == null) return;
+  let alpha = e.alpha;
+  if (typeof e.webkitCompassHeading === 'number' && e.webkitCompassHeading >= 0) {
+    alpha = 360 - e.webkitCompassHeading;           // iPhone: true-north reference
+    sensorAbsolute = true;
+  } else if (e.absolute || e.type === 'deviceorientationabsolute') {
+    sensorAbsolute = true;
+  }
+  if (alpha == null) return;
+  sensorSeen = true;
+  smoothAngle('a', alpha, 0.35); smoothAngle('b', e.beta, 0.35); smoothAngle('g', e.gamma, 0.35);
+}
+
+// Rotation matrix that turns phone coordinates into world coordinates (East, North, Up)
+function phoneToWorld() {
+  const a = angDeg('a') * rad, b = angDeg('b') * rad, g = angDeg('g') * rad;
+  const cA = Math.cos(a), sA = Math.sin(a), cB = Math.cos(b), sB = Math.sin(b), cG = Math.cos(g), sG = Math.sin(g);
+  return [
+    [cA * cG - sA * sB * sG, -cB * sA, cG * sA * sB + cA * sG],
+    [cG * sA + cA * sB * sG,  cA * cB, sA * sG - cA * cG * sB],
+    [-cB * sG,                sB,      cB * cG]
+  ];
+}
+
+// Where the back camera points: compass direction + height
+function cameraAim(R) {
+  const E = -R[0][2], N = -R[1][2], U = -R[2][2];
+  return { az: mod(Math.atan2(E, N) * deg, 360), alt: Math.asin(Math.max(-1, Math.min(1, U))) * deg };
+}
+
+const wrap180 = x => mod(x + 180, 360) - 180;
+function screenAngle() {
+  const a = (screen.orientation && typeof screen.orientation.angle === 'number') ? screen.orientation.angle : (window.orientation || 0);
+  return mod(a, 360);
+}
+
+// Turn a sky direction into a spot on the canvas. 'front' is false if it is behind the camera.
+function project(az, alt, R, f, cx, cy, rot) {
+  const ca = Math.cos(alt * rad), s = [ca * Math.sin((az + azOffset) * rad), ca * Math.cos((az + azOffset) * rad), Math.sin(alt * rad)];
+  // world -> phone: multiply by the transpose of R
+  const dx = R[0][0] * s[0] + R[1][0] * s[1] + R[2][0] * s[2];
+  const dy = R[0][1] * s[0] + R[1][1] * s[1] + R[2][1] * s[2];
+  const dz = R[0][2] * s[0] + R[1][2] * s[1] + R[2][2] * s[2];
+  // rotate for landscape holds
+  let sx = dx, sy = dy;
+  if (rot === 90) { sx = -dy; sy = dx; } else if (rot === 180) { sx = -dx; sy = -dy; } else if (rot === 270) { sx = dy; sy = -dx; }
+  const front = dz < -1e-6;
+  const k = front ? f / -dz : 0;
+  return { x: cx + sx * k, y: cy - sy * k, front, vx: sx, vy: sy };
+}
+
+/* ---------- Drawing ---------- */
+function drawSun() {
+  sunRaf = requestAnimationFrame(drawSun);
+  const box = sunCanvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const W = Math.round(box.width * dpr), H = Math.round(box.height * dpr);
+  if (sunCanvas.width !== W || sunCanvas.height !== H) { sunCanvas.width = W; sunCanvas.height = H; }
+  sctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  sctx.clearRect(0, 0, box.width, box.height);
+  if (!sunLoc || !sensorSeen || !ang.a) return;
+
+  const now = Date.now();
+  if (!sunTick || now - sunTick > 1000) {
+    sunNowPos = sunPosition(new Date(), sunLoc.lat, sunLoc.lng); sunTick = now;
+    if (sunPathDay !== new Date().toDateString()) buildSunPath();
+  }
+
+  const R = phoneToWorld(), aim = cameraAim(R), rot = screenAngle();
+  const vw = sunVideo.videoWidth || 720, vh = sunVideo.videoHeight || 1280;
+  const scale = Math.max(box.width / vw, box.height / vh);
+  const f = (Math.max(vw, vh) * scale / 2) / Math.tan(HFOV_LONG_SIDE * rad / 2);
+  const cx = box.width / 2, cy = box.height / 2;
+  const P = (az, alt) => project(az, alt, R, f, cx, cy, rot);
+  const onScreen = p => p.front && p.x > -40 && p.x < box.width + 40 && p.y > -40 && p.y < box.height + 40;
+
+  // horizon line + compass letters
+  sctx.lineWidth = 2; sctx.strokeStyle = 'rgba(255,255,255,.55)'; sctx.beginPath();
+  let pen = false;
+  for (let az = 0; az <= 360; az += 3) {
+    const p = P(az, 0);
+    if (p.front && Math.abs(p.x - cx) < 4000 && Math.abs(p.y - cy) < 4000) { pen ? sctx.lineTo(p.x, p.y) : sctx.moveTo(p.x, p.y); pen = true; } else pen = false;
+  }
+  sctx.stroke();
+  sctx.font = '700 14px -apple-system, sans-serif'; sctx.textAlign = 'center'; sctx.fillStyle = '#fff';
+  [['N', 0], ['E', 90], ['S', 180], ['W', 270]].forEach(([t, az]) => {
+    const p = P(az, 0); if (onScreen(p)) sctx.fillText(t, p.x, p.y - 8);
+  });
+
+  // today's sun path
+  sunPath.forEach(pt => {
+    if (pt.alt < -1) return;
+    const p = P(pt.az, pt.alt); if (!onScreen(p)) return;
+    sctx.fillStyle = pt.hour !== null ? 'rgba(255,214,10,.95)' : 'rgba(255,214,10,.45)';
+    sctx.beginPath(); sctx.arc(p.x, p.y, pt.hour !== null ? 3.5 : 2, 0, 7); sctx.fill();
+    if (pt.hour !== null) {
+      sctx.font = '11px -apple-system, sans-serif'; sctx.fillStyle = 'rgba(255,255,255,.85)';
+      sctx.fillText((pt.hour % 12 || 12) + (pt.hour < 12 ? 'a' : 'p'), p.x, p.y - 8);
+    }
+  });
+
+  // the sun itself
+  const sp = P(sunNowPos.az, sunNowPos.alt);
+  const up = sunNowPos.alt >= 0;
+  if (onScreen(sp)) {
+    sctx.save(); sctx.translate(sp.x, sp.y);
+    sctx.strokeStyle = up ? '#ffd60a' : '#8e8e93'; sctx.fillStyle = up ? 'rgba(255,214,10,.35)' : 'rgba(142,142,147,.3)';
+    sctx.lineWidth = 3; sctx.beginPath(); sctx.arc(0, 0, 18, 0, 7); sctx.fill(); sctx.stroke();
+    for (let i = 0; i < 8; i++) { const t = i * Math.PI / 4; sctx.beginPath(); sctx.moveTo(Math.cos(t) * 24, Math.sin(t) * 24); sctx.lineTo(Math.cos(t) * 32, Math.sin(t) * 32); sctx.stroke(); }
+    sctx.restore();
+  } else {
+    // arrow on the edge, pointing the way to turn the phone
+    let vx = sp.vx, vy = sp.vy;
+    if (Math.hypot(vx, vy) < 1e-4) { vx = 1; vy = 0; }     // dead behind us: any way works
+    const t = Math.atan2(-vy, vx);
+    const m = 34;
+    // walk along the ray from the center until just inside the edge
+    const s = Math.min((box.width / 2 - m) / Math.max(1e-6, Math.abs(Math.cos(t))), (box.height / 2 - m) / Math.max(1e-6, Math.abs(Math.sin(t))));
+    const ax = cx + Math.cos(t) * s, ay = cy + Math.sin(t) * s;
+    sctx.save(); sctx.translate(ax, ay); sctx.rotate(t);
+    sctx.fillStyle = up ? '#ffd60a' : '#8e8e93'; sctx.strokeStyle = '#000'; sctx.lineWidth = 2;
+    sctx.beginPath(); sctx.moveTo(22, 0); sctx.lineTo(-10, -16); sctx.lineTo(-4, 0); sctx.lineTo(-10, 16); sctx.closePath(); sctx.stroke(); sctx.fill();
+    sctx.restore();
+  }
+
+  // center cross
+  sctx.strokeStyle = 'rgba(255,255,255,.9)'; sctx.lineWidth = 1.5;
+  sctx.beginPath(); sctx.moveTo(cx - 12, cy); sctx.lineTo(cx + 12, cy); sctx.moveTo(cx, cy - 12); sctx.lineTo(cx, cy + 12); sctx.stroke();
+
+  // text readouts
+  const dAz = wrap180(sunNowPos.az + azOffset - aim.az), dAlt = sunNowPos.alt - aim.alt;
+  $('sunNow').textContent = Math.round(sunNowPos.az) + '° ' + compassWord(sunNowPos.az) + ' · ' + Math.round(sunNowPos.alt) + '° up';
+  $('sunAim').textContent = Math.round(mod(aim.az - azOffset, 360)) + '° ' + compassWord(mod(aim.az - azOffset, 360)) + ' · ' + Math.round(aim.alt) + '° up';
+  if (!up) $('sunGuide').textContent = 'Sun is below the horizon';
+  else if (Math.abs(dAz) < 3 && Math.abs(dAlt) < 3) $('sunGuide').textContent = 'On the sun ✓';
+  else $('sunGuide').textContent = (Math.abs(dAz) >= 3 ? 'Turn ' + Math.round(Math.abs(dAz)) + '° ' + (dAz > 0 ? 'right' : 'left') : '') +
+    (Math.abs(dAz) >= 3 && Math.abs(dAlt) >= 3 ? ', ' : '') + (Math.abs(dAlt) >= 3 ? 'tilt ' + Math.round(Math.abs(dAlt)) + '° ' + (dAlt > 0 ? 'up' : 'down') : '');
+}
+
+function compassWord(az) { return ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.round(az / 45) % 8]; }
+
+/* ---------- Start / stop ---------- */
+function getLocation() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) return reject(new Error('no geolocation'));
+    navigator.geolocation.getCurrentPosition(p => resolve({ lat: p.coords.latitude, lng: p.coords.longitude }), reject, { timeout: 10000, maximumAge: 300000 });
+  });
+}
+
+async function startSunFinder() {
+  // iPhone only hands out motion/compass data after a tap + permission — this must run first, straight from the tap
+  try {
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+      const r = await DeviceOrientationEvent.requestPermission();
+      if (r !== 'granted') throw new Error('denied');
+    }
+  } catch (e) {
+    $('sunMsg').style.display = 'flex';
+    $('sunMsg').textContent = 'Motion & Orientation access is needed to know where the phone points. On iPhone: Settings → Safari → Motion & Orientation Access (or reload and tap Allow).';
+    return;
+  }
+  stopSunFinder(true);
+  // Android Chrome has a separate "absolute" (true compass) event; use only that one there
+  window.addEventListener(window.ondeviceorientationabsolute !== undefined ? 'deviceorientationabsolute' : 'deviceorientation', onOrientation);
+  azOffset = 0;
+
+  $('sunMsg').style.display = 'flex'; $('sunMsg').textContent = 'Finding your location…';
+  try { sunLoc = await getLocation(); }
+  catch (e) { $('sunMsg').textContent = 'Couldn’t get your location. Allow location access and try again.'; return; }
+  showSunTimes(sunLoc.lat, sunLoc.lng);
+  buildSunPath(); sunTick = 0;
+
+  if (stream) stopMeterCamera();                       // free the camera used by the Meter tab
+  try {
+    sunStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+    sunVideo.srcObject = sunStream;
+  } catch (e) { /* still useful as a compass without the picture */ }
+
+  sunRunning = true;
+  $('btnSunStart').textContent = 'Sun finder on';
+  $('sunMsg').style.display = 'none';
+  setTimeout(() => {
+    if (sunRunning && sensorSeen && !sensorAbsolute) $('sunNote').textContent = 'This device gave no true-north compass, so the sun may be rotated sideways. Point the center cross at the real sun and tap “Align to sun”.';
+    if (sunRunning && !sensorSeen) {
+      $('sunMsg').style.display = 'flex';
+      $('sunMsg').textContent = 'No compass/motion data from this device. Try a phone with sensors, and allow motion access.';
+    }
+  }, 2500);
+  cancelAnimationFrame(sunRaf); drawSun();
+}
+
+function stopSunFinder(keepMsg) {
+  window.removeEventListener('deviceorientation', onOrientation);
+  window.removeEventListener('deviceorientationabsolute', onOrientation);
+  cancelAnimationFrame(sunRaf);
+  if (sunStream) sunStream.getTracks().forEach(t => t.stop());
+  sunStream = null; sunVideo.srcObject = null;
+  sunRunning = false; sensorSeen = false; sensorAbsolute = false; ang.a = ang.b = ang.g = null;
+  $('btnSunStart').textContent = 'Start sun finder';
+  if (!keepMsg) { $('sunMsg').style.display = 'flex'; $('sunMsg').textContent = 'Tap “Start sun finder”, then hold your phone up and sweep it around the sky.'; }
+}
+
+$('btnSunStart').addEventListener('click', startSunFinder);
+$('btnSunAlign').addEventListener('click', () => {
+  if (!sunRunning || !sunNowPos || !ang.a) return alert('Start the sun finder first, then point the center cross at the real sun.');
+  const aim = cameraAim(phoneToWorld());
+  azOffset = wrap180(aim.az - (sunNowPos.az));            // how far the compass is off
+  $('sunNote').textContent = 'Compass aligned (' + (azOffset > 0 ? '+' : '') + Math.round(azOffset) + '° correction). Tap “Start sun finder” again to reset.';
 });
 
 renderLibrary();
