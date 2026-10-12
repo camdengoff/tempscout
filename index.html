@@ -876,7 +876,8 @@ function buildSunAhead() {
 // moves. So each reading is turned into a rotation matrix straight away, and the matrix is what
 // gets smoothed.
 let Rs = null;                // smoothed raw rotation matrix (phone -> world), rows
-let yawOff = null;            // iPhone only: {s, c} correction from the phone's arbitrary yaw to true north
+let yawOff = null;            // iPhone only: {s, c} correction from the phone's arbitrary yaw to true north (locked once)
+let yawAcc = { s: 0, c: 0, n: 0 }, needYaw = false;
 function eulerToMatrix(aDeg, bDeg, gDeg) {
   const a = aDeg * rad, b = bDeg * rad, g = gDeg * rad;
   const cA = Math.cos(a), sA = Math.sin(a), cB = Math.cos(b), sB = Math.sin(b), cG = Math.cos(g), sG = Math.sin(g);
@@ -914,7 +915,17 @@ function onOrientation(e) {
     const raw = camDir ? azOf(-Rn[0][2], -Rn[1][2]) : azOf(Rn[0][1], Rn[1][1]);
     const off = (e.webkitCompassHeading - raw) * rad;
     const t = { s: Math.sin(off), c: Math.cos(off) };
-    yawOff = yawOff ? { s: yawOff.s + (t.s - yawOff.s) * 0.05, c: yawOff.c + (t.c - yawOff.c) * 0.05 } : t;
+    needYaw = true;
+    if (!yawOff) {
+      // calibrate once: average the first ~20 readings, then lock. After that the gyro-based alpha
+      // carries the rotation, so the sun stays put in the sky however the phone is turned.
+      yawAcc.s += t.s; yawAcc.c += t.c;
+      if (++yawAcc.n >= 20) { const l = Math.hypot(yawAcc.s, yawAcc.c) || 1; yawOff = { s: yawAcc.s / l, c: yawAcc.c / l }; }
+    } else if (Math.abs(Rn[2][2]) < 0.3) {
+      // phone upright: nudge very slowly toward the compass, ignoring readings that disagree a lot
+      const dot = t.s * yawOff.s + t.c * yawOff.c;
+      if (dot > Math.cos(15 * rad)) { yawOff = { s: yawOff.s + (t.s - yawOff.s) * 0.003, c: yawOff.c + (t.c - yawOff.c) * 0.003 }; }
+    }
   } else if (e.absolute || e.type === 'deviceorientationabsolute') {
     sensorAbsolute = true;
   }
@@ -965,6 +976,7 @@ function drawSun() {
   sctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   sctx.clearRect(0, 0, box.width, box.height);
   if (!sunLoc || !sensorSeen || !Rs) return;
+  if (needYaw && !yawOff) { $('sunGuide').textContent = 'Calibrating compass… hold still'; return; }
 
   const now = Date.now();
   if (!sunTick || now - sunTick > 1000) {
@@ -1116,7 +1128,7 @@ function stopSunFinder(keepMsg) {
   cancelAnimationFrame(sunRaf);
   if (sunStream) sunStream.getTracks().forEach(t => t.stop());
   sunStream = null; sunVideo.srcObject = null;
-  sunRunning = false; sensorSeen = false; sensorAbsolute = false; Rs = null; yawOff = null;
+  sunRunning = false; sensorSeen = false; sensorAbsolute = false; Rs = null; yawOff = null; yawAcc = { s: 0, c: 0, n: 0 }; needYaw = false;
   $('btnSunStart').textContent = 'Start sun finder';
   if (!keepMsg) { $('sunMsg').style.display = 'flex'; $('sunMsg').textContent = 'Tap “Start sun finder”, then hold your phone up and sweep it around the sky.'; }
 }
