@@ -205,6 +205,34 @@ final class MeterEngineTests: XCTestCase {
         XCTAssertEqual(e.live!.kelvin!, 3200, accuracy: 30)
     }
 
+    /// Adding a calibration point while a reading is held must change that held reading straight away.
+    func testAddingCalibrationUpdatesHeldReading() {
+        let e = MeterEngine()
+        for _ in 0..<5 { e.ingest(linear: lin(0.4), clipped: false) }
+        e.startMeasuring()
+        for _ in 0..<MeterEngine.framesPerMeasure { e.ingest(linear: lin(0.4), clipped: false) }
+        XCTAssertTrue(e.isHeld)
+        XCTAssertEqual(e.held!.kelvin!, 6504, accuracy: 5)
+        let spread = e.held!.spreadK
+
+        let measured = e.measuredMiredForCalibration()!
+        e.calPoints = [CalPoint(m: measured, t: ColorMath.mired(5600))]
+        e.refresh()
+
+        XCTAssertEqual(e.held!.kelvin!, 5600, accuracy: 5)          // now shows the known light
+        XCTAssertEqual(e.held!.spreadK, spread)
+        XCTAssertEqual(e.uncalibratedKelvin()!, 6504, accuracy: 5)   // the raw camera value is still available
+    }
+
+    func testAddingCalibrationUpdatesLiveReading() {
+        let e = MeterEngine()
+        for _ in 0..<12 { e.ingest(linear: lin(0.4), clipped: false) }
+        let measured = e.measuredMiredForCalibration()!
+        e.calPoints = [CalPoint(m: measured, t: ColorMath.mired(3000))]
+        e.refresh()
+        XCTAssertEqual(e.live!.kelvin!, 3000, accuracy: 5)
+    }
+
     func testCalibrationPointsApply() {
         let e = MeterEngine()
         e.calPoints = [CalPoint(m: ColorMath.mired(6504), t: ColorMath.mired(5600))]

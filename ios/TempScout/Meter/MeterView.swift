@@ -396,6 +396,12 @@ struct SettingsSheet: View {
     @State private var note = ""
     @State private var message: String?
 
+    private var fitDescription: String {
+        guard !vm.calPoints.isEmpty else { return "No calibration yet: the two numbers above are the same." }
+        let f = Calibration.fit(vm.calPoints)
+        return String(format: "Fit from %d point%@: slope %.2f, shift %+.0f mired.", f.n, f.n == 1 ? "" : "s", f.a, f.b)
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -430,6 +436,12 @@ struct SettingsSheet: View {
                 Section("Calibrate (optional)") {
                     Text("Point at a light of known Kelvin (a bulb's label, a panel, a real meter), tap Measure, type its Kelvin below and add it. Use two lights, one warm (like 2700K) and one cool (like 5600K), for the best consistency.")
                         .font(.footnote).foregroundColor(Theme.muted)
+                    // live check: is the calibration actually changing the number?
+                    if let raw = vm.uncalibratedKelvin, let shown = vm.reading?.kelvin {
+                        HStack { Text("Camera reads"); Spacer(); Text("\(Int((raw / 10).rounded() * 10))K").monospacedDigit() }
+                        HStack { Text("Shown after calibration"); Spacer(); Text("\(Int((shown / 10).rounded() * 10))K").monospacedDigit() }
+                    }
+                    Text(fitDescription).font(.footnote).foregroundColor(Theme.muted)
                     TextField("Known Kelvin, e.g. 5600", text: $knownKelvin).keyboardType(.numberPad)
                     Button("Add calibration point") {
                         if let k = Double(knownKelvin), vm.addCalibrationPoint(knownKelvin: k) {

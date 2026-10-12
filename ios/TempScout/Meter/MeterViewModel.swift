@@ -130,6 +130,9 @@ final class MeterViewModel: ObservableObject {
 
     func resetCalibration() { calPoints = [] }
 
+    /// What the camera says right now, before calibration (for the diagnostic in Settings).
+    var uncalibratedKelvin: Double? { engine.uncalibratedKelvin() }
+
     func setReferenceFromReading() {
         referenceKelvin = reading?.displayKelvin
     }

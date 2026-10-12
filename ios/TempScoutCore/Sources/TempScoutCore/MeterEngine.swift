@@ -81,6 +81,11 @@ public final class MeterEngine {
         return ColorMath.mired(raw) + wbOffset
     }
 
+    /// What the camera says for the current colour with no calibration applied (white balance lock still accounted for).
+    public func uncalibratedKelvin() -> Double? {
+        measuredMiredForCalibration().map { 1e6 / $0 }
+    }
+
     public func ingest(linear lin: RGB, clipped: Bool) {
         if held != nil { return }
         let frame = reading(fromLinear: lin)
