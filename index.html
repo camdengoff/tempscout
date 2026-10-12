@@ -63,6 +63,12 @@
   }
   .camera .msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 24px; color: var(--muted); }
 
+  .quality { font-size: 13px; margin-top: 10px; padding: 8px 12px; border-radius: 10px; background: var(--panel); color: var(--muted); }
+  .quality.good { color: #30d158; }
+  .quality.warn { color: var(--warm); }
+  .calpt { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-top: 1px solid var(--panel-2); font-size: 14px; font-variant-numeric: tabular-nums; }
+  .calpt button { flex: none; padding: 4px 10px; font-size: 13px; }
+
   /* ---------- Readouts ---------- */
   .readouts { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 10px; }
   .read { background: var(--panel); border-radius: var(--radius); padding: 12px; }
@@ -152,8 +158,9 @@
   <div class="row">
     <button class="primary" id="btnStart">Start camera</button>
     <button id="btnFlip">Flip</button>
-    <button id="btnHold">Hold</button>
+    <button id="btnHold">Measure</button>
   </div>
+  <div class="quality" id="quality">Point at a white or gray card in the light you want to measure.</div>
 
   <div class="readouts" style="margin-top:12px">
     <div class="read big">
@@ -218,13 +225,14 @@
 
   <div class="card">
     <h3>Calibrate (optional)</h3>
-    <div class="note" style="margin-top:0">If the phone won’t let the app lock white balance, readings are estimates. If you have a real meter, or a known light (e.g. a 5600K panel), enter its value here while pointing at that light. The app will correct all readings to match. Recalibrate after changing the white balance lock.</div>
+    <div class="note" style="margin-top:0">The phone’s automatic white balance squashes the colour range, so readings are estimates until calibrated. Point at a light of known Kelvin (a bulb’s label, a panel, a real meter), tap “Measure”, type its Kelvin, and tap “Add calibration point”. <b>Use two lights, one warm (e.g. a 2700K bulb) and one cool (e.g. 5600K)</b>, and the app fits a curve that stays accurate across the range. Redo it after changing the white balance lock.</div>
     <label class="field">Known Kelvin</label>
     <input type="number" id="calK" placeholder="5600" inputmode="numeric">
     <div class="row">
-      <button id="btnCal">Calibrate to this</button>
+      <button id="btnCal">Add calibration point</button>
       <button id="btnCalReset">Reset</button>
     </div>
+    <div id="calList"></div>
     <div class="note" id="calInfo"></div>
   </div>
 </section>
@@ -376,7 +384,6 @@ const video = $('video');
 let stream = null;
 let facing = 'environment';        // back camera. 'user' = front camera.
 let held = false;                  // is the reading frozen?
-let calOffsetMired = load('ts_cal', 0);
 let reference = load('ts_ref', null);
 let current = null;                // the latest reading {k, tint, lum}
 
@@ -494,10 +501,19 @@ $('btnFlip').addEventListener('click', () => {
   facing = facing === 'environment' ? 'user' : 'environment';
   startCamera();
 });
-$('btnHold').addEventListener('click', () => {
-  held = !held;
+// "Measure" averages 30 frames for a steadier, repeatable number, then freezes it. Tap again to resume live.
+let sampling = null;                 // {n, sum:{r,g,b}, mired:[]} while measuring
+function setHold(on) {
+  held = on;
   $('btnHold').classList.toggle('on', held);
-  $('btnHold').textContent = held ? 'Held' : 'Hold';
+  $('btnHold').textContent = held ? 'Measured · tap to resume' : 'Measure';
+}
+$('btnHold').addEventListener('click', () => {
+  if (held) return setHold(false);
+  if (sampling) return;
+  if (!stream) return alert('Start the camera first.');
+  sampling = { n: 0, sum: { r: 0, g: 0, b: 0 }, mired: [] };
+  $('btnHold').textContent = 'Measuring… hold steady';
 });
 
 // The measure-area slider changes the size of the white square
@@ -511,16 +527,36 @@ $('areaSize').addEventListener('input', e => {
   $('target').style.width = v + '%';
 })();
 
-// Keep a smoothed average so numbers don't flicker
-let avg = null;
+// Keep a smoothed average so numbers don't flicker (averaged in linear light, like real light adds up)
+let avg = null;                      // smoothed colour as ordinary 0-255 RGB (used by calibration + saving)
+let linAvg = null;                   // the same, in linear light
+const toSRGB = c => 255 * (c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(Math.max(c, 0), 1 / 2.4) - 0.055);
 function smooth(prev, next, a) { return prev === null ? next : prev + (next - prev) * a; }
+const kHist = [];                    // recent per-frame readings (mired), to tell whether the reading is steady
 
-function measure() {
-  if (!stream || video.readyState < 2 || held) return;
+/* ---------- Calibration curve ----------
+   Automatic white balance squashes the range of colours, so one fixed shift only fits near the light you
+   calibrated on. With two or more known lights we fit  true = a × measured + b  (in mireds). */
+let calPoints = load('ts_cal_pts', []);          // [{m: what the camera said (mired), t: the truth (mired)}]
+const calLegacy = load('ts_cal', 0);             // single shift saved by older versions; used until a point is added
+function calFit() {
+  const n = calPoints.length;
+  if (!n) return { a: 1, b: calLegacy, n: 0 };
+  const mx = calPoints.reduce((q, p) => q + p.m, 0) / n, my = calPoints.reduce((q, p) => q + p.t, 0) / n;
+  const sxx = calPoints.reduce((q, p) => q + (p.m - mx) ** 2, 0), sxy = calPoints.reduce((q, p) => q + (p.m - mx) * (p.t - my), 0);
+  if (n === 1 || sxx < 25) return { a: 1, b: my - mx, n };       // lights too similar to fit a slope
+  const a = Math.max(0.5, Math.min(2, sxy / sxx));
+  return { a, b: my - a * mx, n };
+}
+function calibratedMired(rawK) {                  // camera's raw Kelvin -> true mired
+  const f = calFit();
+  return Math.max(80, Math.min(700, f.a * (mired(rawK) + wbOffsetMired()) + f.b));
+}
+
+// Average colour inside the measure square, in linear light. Also notes whether it is clipped.
+function readRegion() {
   const vw = video.videoWidth, vh = video.videoHeight;
-  if (!vw) return;
-
-  // --- 1. Measure the colour inside the white square ---
+  if (!vw) return null;
   // The video fills the box using "cover", so the square maps onto the middle of the frame.
   const box = $('camera').getBoundingClientRect();
   const scale = Math.max(box.width / vw, box.height / vh);          // how much video was enlarged
@@ -529,23 +565,69 @@ function measure() {
   const sx = vw / 2 - side / 2, sy = vh / 2 - side / 2;
   regionCtx.drawImage(video, sx, sy, side, side, 0, 0, 32, 32);
   const d = regionCtx.getImageData(0, 0, 32, 32).data;
-  let r = 0, g = 0, b = 0, n = d.length / 4;
-  for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; }
-  r /= n; g /= n; b /= n;
-
-  if (!avg) avg = { r, g, b };
-  avg.r = smooth(avg.r, r, 0.25); avg.g = smooth(avg.g, g, 0.25); avg.b = smooth(avg.b, b, 0.25);
-
-  let k = rgbToKelvin(avg.r, avg.g, avg.b);
-  if (k !== null) {
-    // apply calibration offset (done in mireds so it behaves evenly)
-    k = 1e6 / (mired(k) + wbOffsetMired() + calOffsetMired);
-    k = Math.max(1500, Math.min(12000, k));
+  const lin = { r: 0, g: 0, b: 0 }; let hi = 0, n = d.length / 4;
+  for (let i = 0; i < d.length; i += 4) {
+    lin.r += toLinear(d[i]); lin.g += toLinear(d[i + 1]); lin.b += toLinear(d[i + 2]);
+    hi += (d[i] >= 250 || d[i + 1] >= 250 || d[i + 2] >= 250) ? 1 : 0;
   }
-  const lum = (0.2126 * avg.r + 0.7152 * avg.g + 0.0722 * avg.b) / 255;
-  const tint = ((avg.g - (avg.r + avg.b) / 2) / Math.max(1, (avg.r + avg.g + avg.b) / 3)) * 100;
+  lin.r /= n; lin.g /= n; lin.b /= n;
+  return { lin, clipped: hi / n > 0.1 };
+}
 
-  current = { k: k ? Math.round(k / 10) * 10 : null, tint: Math.round(tint * 10) / 10, lum: Math.round(lum * 100), rgb: [avg.r, avg.g, avg.b].map(Math.round) };
+// Colour (linear light) -> reading
+function readingFrom(lin) {
+  const r = toSRGB(lin.r), g = toSRGB(lin.g), b = toSRGB(lin.b);
+  const rawK = rgbToKelvin(r, g, b);
+  const m = rawK ? calibratedMired(rawK) : null;
+  const lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+  const tint = ((g - (r + b) / 2) / Math.max(1, (r + g + b) / 3)) * 100;
+  return { r, g, b, m, k: m ? 1e6 / m : null, lum, tint };
+}
+
+const roundK = k => Math.round(k / 50) * 50;      // the camera is not good to 10K, so don't pretend it is
+const sd = a => { const mu = a.reduce((x, y) => x + y, 0) / a.length; return Math.sqrt(a.reduce((x, y) => x + (y - mu) ** 2, 0) / a.length); };
+
+function setQuality(text, cls) { const q = $('quality'); q.textContent = text; q.className = 'quality ' + (cls || ''); }
+
+function measure() {
+  if (!stream || video.readyState < 2 || held) return;
+  const reg = readRegion();
+  if (!reg) return;
+
+  // --- 1. Measure the colour inside the white square ---
+  const frame = readingFrom(reg.lin);               // this frame on its own
+  if (frame.m) { kHist.push(frame.m); if (kHist.length > 10) kHist.shift(); }
+
+  if (sampling) {                                   // "Measure": collect frames, then finish
+    sampling.n++; sampling.sum.r += reg.lin.r; sampling.sum.g += reg.lin.g; sampling.sum.b += reg.lin.b;
+    if (frame.m) sampling.mired.push(frame.m);
+    $('btnHold').textContent = 'Measuring… ' + Math.max(0, Math.ceil((30 - sampling.n) / 10)) + 's';
+    if (sampling.n >= 30) {
+      const n = sampling.n, lin = { r: sampling.sum.r / n, g: sampling.sum.g / n, b: sampling.sum.b / n };
+      const res = readingFrom(lin);
+      linAvg = lin; avg = { r: res.r, g: res.g, b: res.b };
+      const spreadM = sampling.mired.length ? sd(sampling.mired) : 0;
+      const spreadK = res.k ? Math.round(Math.abs(res.k - 1e6 / (res.m + spreadM)) / 10) * 10 : 0;
+      current = { k: res.k ? roundK(res.k) : null, tint: Math.round(res.tint * 10) / 10, lum: Math.round(res.lum * 100), rgb: [res.r, res.g, res.b].map(Math.round), spread: spreadK };
+      sampling = null; setHold(true);
+      setQuality(spreadK > 300 ? 'Measured, but the frames disagreed (±' + spreadK + 'K). Hold steadier and retry.' : 'Measured: average of 30 frames ✓', spreadK > 300 ? 'warn' : 'good');
+      updateReadouts();
+      return;
+    }
+  }
+
+  if (!linAvg) linAvg = { ...reg.lin };
+  linAvg.r = smooth(linAvg.r, reg.lin.r, 0.25); linAvg.g = smooth(linAvg.g, reg.lin.g, 0.25); linAvg.b = smooth(linAvg.b, reg.lin.b, 0.25);
+  const res = readingFrom(linAvg);
+  avg = { r: res.r, g: res.g, b: res.b };
+  current = { k: res.k ? roundK(res.k) : null, tint: Math.round(res.tint * 10) / 10, lum: Math.round(res.lum * 100), rgb: [res.r, res.g, res.b].map(Math.round) };
+
+  // live hint: is this a trustworthy reading?
+  if (reg.clipped || res.lum > 0.95) setQuality('Too bright: colours wash out. Tilt away or step back.', 'warn');
+  else if (res.lum < 0.08) setQuality('Too dark: move the card into more light.', 'warn');
+  else if (kHist.length >= 10 && sd(kHist) > 15) setQuality('Moving or flickering. Hold steady.', 'warn');
+  else if (kHist.length >= 10 && sd(kHist) > 6) setQuality('Settling…');
+  else setQuality('Steady ✓ Good signal. Tap “Measure” to lock in an average.', 'good');
 
   // --- 2. Histogram of the whole frame ---
   frameCtx.drawImage(video, 0, 0, 96, 96);
@@ -575,7 +657,7 @@ function updateReadouts() {
   if (c.k) {
     let word = c.k < 2800 ? 'Candle / tungsten glow' : c.k < 3500 ? 'Warm tungsten' : c.k < 4500 ? 'Warm white'
       : c.k < 5200 ? 'Neutral white' : c.k < 6000 ? 'Daylight' : c.k < 7500 ? 'Overcast / cool' : 'Shade / blue sky';
-    $('rdKsub').textContent = word;
+    $('rdKsub').textContent = word + (c.spread ? ' · ±' + c.spread + 'K' : '');
     const pct = (Math.max(2000, Math.min(10000, c.k)) - 2000) / 8000 * 100;
     $('swatchPin').style.left = pct + '%';
   }
@@ -623,20 +705,32 @@ $('btnClearRef').addEventListener('click', () => {
 });
 
 function showCalInfo() {
-  $('calInfo').textContent = calOffsetMired
-    ? 'Calibration active (' + (calOffsetMired > 0 ? '+' : '') + Math.round(calOffsetMired) + ' mired shift).'
-    : 'No calibration applied.';
+  const f = calFit();
+  $('calList').innerHTML = calPoints.map((p, i) =>
+    '<div class="calpt"><span>Truth <b>' + Math.round(1e6 / p.t) + 'K</b> · camera said ' + Math.round(1e6 / p.m) + 'K</span><button data-del="' + i + '">×</button></div>').join('');
+  $('calInfo').textContent = f.n >= 2
+    ? 'Calibration curve from ' + f.n + ' lights (slope ' + f.a.toFixed(2) + '). Readings should now hold up from warm to cool.'
+    : f.n === 1 ? 'One point: readings are shifted by ' + Math.round(f.b) + ' mired. Add a second light, warm or cool from the first, to fit a curve.'
+    : calLegacy ? 'Old single calibration active (' + (calLegacy > 0 ? '+' : '') + Math.round(calLegacy) + ' mired shift).' : 'No calibration applied.';
 }
 $('btnCal').addEventListener('click', () => {
   const known = parseFloat($('calK').value);
-  if (!known || !avg) return alert('Start the camera, point at your known light, and enter its Kelvin value.');
+  if (!known || !avg) return alert('Start the camera, point at your known light, tap “Measure”, and enter its Kelvin value.');
   const raw = rgbToKelvin(avg.r, avg.g, avg.b);
   if (!raw) return alert('Too dark to calibrate.');
-  calOffsetMired = mired(known) - mired(raw) - wbOffsetMired();
-  store('ts_cal', calOffsetMired);
+  const pt = { m: mired(raw) + wbOffsetMired(), t: mired(known) };
+  // re-measuring a light you already added replaces that point instead of piling up
+  calPoints = calPoints.filter(p => Math.abs(p.t - pt.t) > 8);
+  calPoints.push(pt);
+  if (calPoints.length > 4) calPoints.shift();
+  store('ts_cal_pts', calPoints);
   showCalInfo();
 });
-$('btnCalReset').addEventListener('click', () => { calOffsetMired = 0; store('ts_cal', 0); showCalInfo(); });
+$('calList').addEventListener('click', e => {
+  if (e.target.dataset.del === undefined) return;
+  calPoints.splice(+e.target.dataset.del, 1); store('ts_cal_pts', calPoints); showCalInfo();
+});
+$('btnCalReset').addEventListener('click', () => { calPoints = []; store('ts_cal_pts', []); store('ts_cal', 0); location.reload(); });
 showCalInfo();
 
 /* ==================================================================
