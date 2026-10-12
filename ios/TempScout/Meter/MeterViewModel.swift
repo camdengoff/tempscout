@@ -77,7 +77,10 @@ final class MeterViewModel: ObservableObject {
     private func lockChanged(to k: Double?) {
         // a different white balance means a held reading no longer applies
         engine.lockedKelvin = k
-        if engine.isHeld { engine.resume() }
+        if engine.isHeld {
+            engine.resume()
+            camera.freezeExposure(false)
+        }
         lockedKelvin = k
         sync()
     }
@@ -90,8 +93,13 @@ final class MeterViewModel: ObservableObject {
     // MARK: - Actions
 
     func toggleMeasure() {
-        if engine.isHeld { engine.resume() }
-        else if engine.progress == nil { engine.startMeasuring() }
+        if engine.isHeld {
+            engine.resume()
+            camera.freezeExposure(false)            // exposure follows the square again
+        } else if engine.progress == nil {
+            engine.startMeasuring()
+            camera.freezeExposure(true)             // hold brightness steady for the 3 seconds
+        }
         sync()
     }
 

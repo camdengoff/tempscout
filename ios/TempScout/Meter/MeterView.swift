@@ -414,6 +414,10 @@ struct SettingsSheet: View {
                         Text("This camera can't lock white balance.").foregroundColor(Theme.muted)
                     }
                     Toggle("Lock exposure", isOn: Binding(get: { vm.exposureLockWanted }, set: { vm.setExposureLock($0) }))
+                    Text(vm.exposureLockWanted
+                         ? "Exposure is frozen. If the card looks too dark or too bright, turn this off."
+                         : "Automatic: exposure follows the white square, so the card is exposed well whatever is around it. It also freezes during a Measure.")
+                        .font(.footnote).foregroundColor(Theme.muted)
                 }
 
                 Section("Measure area") {

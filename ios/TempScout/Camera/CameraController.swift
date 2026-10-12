@@ -36,6 +36,11 @@ final class CameraController: NSObject, ObservableObject, AVCaptureVideoDataOutp
     private var device: AVCaptureDevice?
     private var configured = false
 
+    // Exposure follows the white square. It can be held still two ways: by the user (Settings) or while a Measure runs.
+    private var userLocksExposure = false
+    private var exposureFrozenForMeasure = false
+    private var lastMeteredPoint = CGPoint(x: -1, y: -1)
+
     // The measure square, in the camera's own 0-1 coordinates. Written from the main thread, read from the sample queue.
     private let roiLock = NSLock()
     private var roi = CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.2)
@@ -72,6 +77,7 @@ final class CameraController: NSObject, ObservableObject, AVCaptureVideoDataOutp
     private func configureAndRun() {
         sessionQueue.async { [weak self] in
             guard let self = self else { return }
+            self.exposureFrozenForMeasure = false
             if !self.configured {
                 guard self.configureSession() else { return }
             }
@@ -113,6 +119,7 @@ final class CameraController: NSObject, ObservableObject, AVCaptureVideoDataOutp
         device = dev
         configured = true
         prepareForMeasuring(dev)
+        meterExposure(atNormalizedPoint: nil)
         let supported = dev.isLockingWhiteBalanceWithCustomDeviceGainsSupported
         DispatchQueue.main.async { self.whiteBalanceLockSupported = supported }
         return true
@@ -182,6 +189,7 @@ final class CameraController: NSObject, ObservableObject, AVCaptureVideoDataOutp
     func setExposureLocked(_ locked: Bool) {
         sessionQueue.async { [weak self] in
             guard let self = self, let dev = self.device else { return }
+            self.userLocksExposure = locked
             do {
                 try dev.lockForConfiguration()
                 defer { dev.unlockForConfiguration() }
@@ -195,6 +203,53 @@ final class CameraController: NSObject, ObservableObject, AVCaptureVideoDataOutp
             } catch {
                 // leave it as it was
             }
+            if !locked {
+                self.lastMeteredPoint = CGPoint(x: -1, y: -1)      // meter on the square again
+                self.meterExposure(atNormalizedPoint: nil)
+            }
+        }
+    }
+
+    /// Hold the exposure still for the 3 seconds of a Measure (so brightness can't shift mid-average), then let it follow again.
+    func freezeExposure(_ freeze: Bool) {
+        sessionQueue.async { [weak self] in
+            guard let self = self, let dev = self.device else { return }
+            self.exposureFrozenForMeasure = freeze
+            if self.userLocksExposure { return }                    // already held by the user
+            do {
+                try dev.lockForConfiguration()
+                defer { dev.unlockForConfiguration() }
+                if freeze {
+                    if dev.isExposureModeSupported(.locked) { dev.exposureMode = .locked }
+                } else if dev.isExposureModeSupported(.continuousAutoExposure) {
+                    dev.exposureMode = .continuousAutoExposure
+                }
+            } catch {
+                // leave it as it was
+            }
+        }
+    }
+
+    /// Automatic exposure normally judges the whole picture. Point it at the white square instead, so the card is
+    /// exposed well whatever is around it. Pass nil to use the square's current position. Runs on the session queue.
+    private func meterExposure(atNormalizedPoint point: CGPoint?) {
+        sessionQueue.async { [weak self] in
+            guard let self = self, let dev = self.device else { return }
+            guard !self.userLocksExposure, !self.exposureFrozenForMeasure else { return }
+            guard dev.isExposurePointOfInterestSupported else { return }
+            let rect = self.currentRect()
+            let raw = point ?? CGPoint(x: rect.midX, y: rect.midY)
+            let p = CGPoint(x: min(max(raw.x, 0.05), 0.95), y: min(max(raw.y, 0.05), 0.95))
+            if abs(p.x - self.lastMeteredPoint.x) < 0.01 && abs(p.y - self.lastMeteredPoint.y) < 0.01 { return }
+            do {
+                try dev.lockForConfiguration()
+                defer { dev.unlockForConfiguration() }
+                dev.exposurePointOfInterest = p
+                if dev.isExposureModeSupported(.continuousAutoExposure) { dev.exposureMode = .continuousAutoExposure }
+                self.lastMeteredPoint = p
+            } catch {
+                // keep metering where it was
+            }
         }
     }
 
@@ -205,6 +260,7 @@ final class CameraController: NSObject, ObservableObject, AVCaptureVideoDataOutp
         roiLock.lock()
         roi = rect
         roiLock.unlock()
+        meterExposure(atNormalizedPoint: CGPoint(x: rect.midX, y: rect.midY))
     }
 
     private func currentRect() -> CGRect {
