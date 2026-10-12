@@ -48,15 +48,22 @@ swift test
 
 ## Using it
 
-- **Card mode (default, easiest):** hold a **white or gray card** so it fills the white square. The app adjusts the
-  camera's white balance until the card looks neutral, then reads the colour temperature from Apple's own factory
-  calibration of your camera. No lock and no calibration needed to start. Wait for the pill to say "Steady".
-- Tap the round shutter to **Measure**: it averages 3 seconds and shows a ± spread. Tap again to resume live.
-- Exposure automatically follows the white square (and freezes during a Measure), so the card is always exposed well.
-- **Manual lock mode** (Settings ▸ Measuring mode): you lock white balance yourself (padlock button, slider in Settings) and
-  calibrate against lights of known colour. Card and Manual keep separate calibration points.
-- **Calibrate (optional):** if a light whose colour you know reads off, point at it with the card, Measure, type its
-  Kelvin in Settings ▸ Calibrate and add it. Settings shows what the camera reads versus what is shown.
+There are three measuring modes (Settings ▸ Measuring mode). **Scene is the default and needs no setup.**
+
+- **Scene:** just point the phone at the light or the scene. It shows the colour temperature the camera's own automatic
+  white balance estimates, like most colour-temperature apps.
+- **Card:** more precise for one light. Fill the white square with a **white or gray card** in that light. The app adjusts
+  the camera's white balance until the card looks neutral, then reads the temperature from Apple's own factory calibration
+  of your camera.
+- **Manual:** advanced. Lock white balance yourself (padlock, slider in Settings) and calibrate against known lights.
+
+For all modes:
+
+- Wait for the pill to say "Steady", then tap the round shutter to **Measure**: it averages 3 seconds and shows a ± spread.
+  Tap again to resume live.
+- Exposure automatically follows the white square (and freezes during a Measure).
+- **Calibrate (optional):** if a light whose colour you know reads off, Measure it, type its Kelvin in Settings ▸ Calibrate
+  and add it. Each mode keeps its own calibration points.
 - The ND row under the Kelvin number comes from the ND tab; tap it to edit.
 
 ## Without XcodeGen

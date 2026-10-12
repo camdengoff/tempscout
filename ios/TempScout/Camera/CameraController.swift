@@ -49,7 +49,7 @@ final class CameraController: NSObject, ObservableObject, AVCaptureVideoDataOutp
 
     // Card mode: the app adjusts the camera's white balance until the card in the square looks neutral.
     private let flagLock = NSLock()
-    private var cardModeFlag = false
+    private var readModeFlag = ReadMode.off
     private var lastServoTime = CFAbsoluteTimeGetCurrent()
 
     // The measure square, in the camera's own 0-1 coordinates. Written from the main thread, read from the sample queue.
@@ -268,16 +268,22 @@ final class CameraController: NSObject, ObservableObject, AVCaptureVideoDataOutp
 
     /// Card mode: instead of a fixed white balance, keep adjusting it until whatever is in the white square looks
     /// neutral grey, then read the colour temperature from Apple's own calibration of those gains.
-    func setCardMode(_ on: Bool) {
+    /// How readings are produced:
+    /// .off   - Manual mode: the app works the colour temperature out from the picture itself.
+    /// .scene - the camera's own automatic white balance estimate for whatever it is pointed at (nothing is adjusted).
+    /// .card  - the app adjusts white balance until the card in the square looks neutral, then reads the temperature.
+    enum ReadMode { case off, scene, card }
+
+    func setReadMode(_ mode: ReadMode) {
         flagLock.lock()
-        cardModeFlag = on
+        readModeFlag = mode
         flagLock.unlock()
     }
 
-    private var cardModeEnabled: Bool {
+    private var readMode: ReadMode {
         flagLock.lock()
         defer { flagLock.unlock() }
-        return cardModeFlag
+        return readModeFlag
     }
 
     private func applyGains(_ gains: AVCaptureDevice.WhiteBalanceGains) {
@@ -307,12 +313,15 @@ final class CameraController: NSObject, ObservableObject, AVCaptureVideoDataOutp
     }
 
     /// One step of card mode. Returns the camera's own reading for the gains in use now, and how neutral the card looks.
-    private func cardStep(_ dev: AVCaptureDevice, _ lin: RGB, clipped: Bool) -> (kelvin: Double?, tint: Double, error: Double?) {
+    private func cardStep(_ dev: AVCaptureDevice, _ lin: RGB, clipped: Bool, adjust: Bool) -> (kelvin: Double?, tint: Double, error: Double?) {
         let gains = dev.deviceWhiteBalanceGains
         guard gainsAreValid(gains, for: dev) else { return (nil, 0, nil) }
         let tt = dev.temperatureAndTintValues(for: gains)
         let kelvin = min(max(Double(tt.temperature), 1500), 12000)
         let tint = tintPercent(for: gains, temperature: tt.temperature, device: dev)
+
+        // Scene mode just reports the camera's own estimate
+        guard adjust else { return (kelvin, tint, nil) }
 
         // too dark or blown out to judge the colour: report, but don't adjust
         guard lin.r > 0.004, lin.g > 0.004, lin.b > 0.004, !clipped else { return (kelvin, tint, nil) }
@@ -401,8 +410,9 @@ final class CameraController: NSObject, ObservableObject, AVCaptureVideoDataOutp
         var cardTint = 0.0
         var neutralError: Double?
         if let dev = device {
-            if cardModeEnabled {
-                let step = cardStep(dev, average, clipped: clipped)
+            let mode = readMode
+            if mode != .off {
+                let step = cardStep(dev, average, clipped: clipped, adjust: mode == .card)
                 cardK = step.kelvin; cardTint = step.tint; neutralError = step.error
             } else if dev.whiteBalanceMode != .locked {
                 // While white balance is automatic, also note what temperature the camera itself believes.
