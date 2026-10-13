@@ -97,7 +97,7 @@ struct MeterView: View {
                 Text("TempScout").font(.headline).shadow(radius: 4)
                 Spacer()
             }
-            Text(MeterViewModel.qualityText(vm.quality))
+            Text(MeterViewModel.qualityText(vm.quality, mode: vm.mode))
                 .font(.footnote)
                 .foregroundColor(qualityColor)
                 .padding(.horizontal, 14).padding(.vertical, 7)
@@ -222,7 +222,7 @@ struct MeterView: View {
     private var chips: some View {
         HStack {
             stat("Bright", vm.reading.map { "\(Int(($0.luminance * 100).rounded()))%" } ?? "—")
-            stat("WB", vm.cardMode ? "Card" : (vm.lockedKelvin.map { "\(Int($0))K" } ?? "Auto"))
+            stat("Mode", vm.mode == .scene ? "Scene" : (vm.mode == .card ? "Card" : (vm.lockedKelvin.map { "WB \(Int($0))K" } ?? "Manual")))
             stat("Cal", vm.calPoints.isEmpty ? "None" : "\(vm.calPoints.count) pt" + (vm.calPoints.count > 1 ? "s" : ""))
         }
         .padding(.horizontal, 6).padding(.vertical, 8)
@@ -257,8 +257,8 @@ struct MeterView: View {
 
     private var shutterRow: some View {
         HStack {
-            if vm.cardMode {
-                // Card mode needs no lock: the app adjusts white balance to the card by itself
+            if vm.usesCameraKelvin {
+                // Scene and Card modes need no lock: the app adjusts white balance to the card by itself
                 Image(systemName: "rectangle.dashed")
                     .font(.system(size: 22))
                     .foregroundColor(Theme.muted)
@@ -404,6 +404,17 @@ struct SettingsSheet: View {
     @State private var note = ""
     @State private var message: String?
 
+    private var modeExplanation: String {
+        switch vm.mode {
+        case .scene:
+            return "Just point the phone at the light or the scene. It shows the colour temperature the camera's own automatic white balance estimates, like most colour-temperature apps. Quickest to use."
+        case .card:
+            return "More precise for a single light. Fill the white square with a white or gray card in that light. The app adjusts the camera's white balance until the card looks neutral, then reads the temperature from Apple's factory calibration of your camera."
+        case .manual:
+            return "Advanced. You lock the camera's white balance yourself and calibrate against lights of known colour."
+        }
+    }
+
     private var fitDescription: String {
         guard !vm.calPoints.isEmpty else { return "No calibration yet: the two numbers above are the same." }
         let f = Calibration.fit(vm.calPoints)
@@ -432,18 +443,16 @@ struct SettingsSheet: View {
         NavigationStack {
             Form {
                 Section("Measuring mode") {
-                    Picker("Mode", selection: Binding(get: { vm.cardMode }, set: { vm.setCardMode($0) })) {
-                        Text("Card (easy)").tag(true)
-                        Text("Manual lock").tag(false)
+                    Picker("Mode", selection: Binding(get: { vm.mode }, set: { vm.setMode($0) })) {
+                        Text("Scene").tag(MeasureMode.scene)
+                        Text("Card").tag(MeasureMode.card)
+                        Text("Manual").tag(MeasureMode.manual)
                     }
                     .pickerStyle(.segmented)
-                    Text(vm.cardMode
-                         ? "Hold a white or gray card in the square. The app adjusts the camera's white balance until the card looks neutral, then reads the colour temperature from Apple's own factory calibration of your camera. No lock or calibration needed to start."
-                         : "Advanced. You lock the camera's white balance yourself and calibrate against lights of known colour.")
-                        .font(.footnote).foregroundColor(Theme.muted)
+                    Text(modeExplanation).font(.footnote).foregroundColor(Theme.muted)
                 }
 
-                if !vm.cardMode {
+                if vm.mode == .manual {
                     Section("White balance") {
                         whiteBalanceControls
                     }
@@ -465,8 +474,8 @@ struct SettingsSheet: View {
                 }
 
                 Section("Calibrate (optional)") {
-                    Text(vm.cardMode
-                         ? "Optional. Card mode already uses Apple's calibration, so try it as is. If a light you know the colour of reads off, point at it with the card, tap Measure, type its Kelvin below and add it. The correction then applies to every reading."
+                    Text(vm.usesCameraKelvin
+                         ? "Optional. Scene and Card already use Apple's calibration, so try them as is. If a light you know the colour of reads off, point at it with the card, tap Measure, type its Kelvin below and add it. The correction then applies to every reading."
                          : "Point at a light of known Kelvin (a bulb's label, a panel, a real meter), tap Measure, type its Kelvin below and add it. Use two lights, one warm (like 2700K) and one cool (like 5600K), for the best consistency.")
                         .font(.footnote).foregroundColor(Theme.muted)
                     // live check: is the calibration actually changing the number?

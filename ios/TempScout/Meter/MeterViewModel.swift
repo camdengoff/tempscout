@@ -2,6 +2,16 @@ import Combine
 import Foundation
 import TempScoutCore
 
+/// How a reading is made.
+enum MeasureMode: String {
+    /// Point at the light or scene: the camera's own automatic white balance estimate (default, no setup).
+    case scene
+    /// Hold a gray or white card in the square: the app adjusts white balance to the card, then reads the temperature.
+    case card
+    /// Advanced: lock white balance yourself and calibrate against known lights.
+    case manual
+}
+
 /// Connects the camera to the colour engine and holds the settings.
 final class MeterViewModel: ObservableObject {
     let camera = CameraController()
@@ -18,9 +28,9 @@ final class MeterViewModel: ObservableObject {
     @Published private(set) var lockedKelvin: Double?
 
     // Settings (saved)
-    /// Card mode (default): the app adjusts the camera's white balance to the card and reads Apple's calibrated temperature.
-    /// Manual mode: lock the white balance yourself and calibrate against known lights.
-    @Published private(set) var cardMode: Bool
+    @Published private(set) var mode: MeasureMode
+    /// Scene and Card both use the camera's own colour temperature; only Manual works it out from the picture.
+    var usesCameraKelvin: Bool { mode != .manual }
     @Published private(set) var wantLock: Bool
     @Published private(set) var wbKelvin: Double
     @Published private(set) var exposureLockWanted: Bool
@@ -31,20 +41,20 @@ final class MeterViewModel: ObservableObject {
             engine.calPoints = calPoints
             engine.refresh()
             sync()
-            if let data = try? JSONEncoder().encode(calPoints) { defaults.set(data, forKey: calibrationKey(card: cardMode)) }
+            if let data = try? JSONEncoder().encode(calPoints) { defaults.set(data, forKey: Self.calibrationKey(mode)) }
         }
     }
 
     init() {
         let d = UserDefaults.standard
-        let card = d.object(forKey: "ts_card_mode") as? Bool ?? true
-        cardMode = card
+        let startMode = MeasureMode(rawValue: d.string(forKey: "ts_mode") ?? "") ?? .scene
+        mode = startMode
         wantLock = d.object(forKey: "ts_wb_lock") as? Bool ?? true
         wbKelvin = d.object(forKey: "ts_wb_k") as? Double ?? 5500
         exposureLockWanted = d.object(forKey: "ts_exp_lock") as? Bool ?? false
         areaFraction = d.object(forKey: "ts_area") as? Double ?? 0.2
         referenceKelvin = d.object(forKey: "ts_ref_k") as? Int
-        if let data = d.data(forKey: card ? "ts_cal_card" : "ts_cal_pts"), let pts = try? JSONDecoder().decode([CalPoint].self, from: data) {
+        if let data = d.data(forKey: Self.calibrationKey(startMode)), let pts = try? JSONDecoder().decode([CalPoint].self, from: data) {
             calPoints = pts
         } else {
             calPoints = []
@@ -68,7 +78,7 @@ final class MeterViewModel: ObservableObject {
 
     private func handle(_ sample: CameraSample) {
         autoKelvin = sample.autoKelvin
-        if cardMode {
+        if usesCameraKelvin {
             engine.ingestCard(kelvin: sample.cardKelvin, tintPercent: sample.cardTintPercent,
                               neutralError: sample.neutralError, linear: sample.linear, clipped: sample.clipped)
         } else {
@@ -85,7 +95,7 @@ final class MeterViewModel: ObservableObject {
     }
 
     private func lockChanged(to k: Double?) {
-        if cardMode { lockedKelvin = k; return }          // card mode adjusts the white balance itself
+        if usesCameraKelvin { lockedKelvin = k; return }          // Scene and Card manage the white balance themselves
         // a different white balance means a held reading no longer applies
         engine.lockedKelvin = k
         if engine.isHeld {
@@ -97,20 +107,34 @@ final class MeterViewModel: ObservableObject {
     }
 
     private func applyCameraSettings() {
-        camera.setCardMode(cardMode)
-        if !cardMode { camera.setWhiteBalance(kelvin: wantLock ? wbKelvin : nil) }
+        switch mode {
+        case .scene:
+            camera.setReadMode(.scene)
+            camera.setWhiteBalance(kelvin: nil)                 // the camera's own automatic white balance
+        case .card:
+            camera.setReadMode(.card)
+        case .manual:
+            camera.setReadMode(.off)
+            camera.setWhiteBalance(kelvin: wantLock ? wbKelvin : nil)
+        }
         camera.setExposureLocked(exposureLockWanted)
     }
 
-    private func calibrationKey(card: Bool) -> String { card ? "ts_cal_card" : "ts_cal_pts" }
+    private static func calibrationKey(_ mode: MeasureMode) -> String {
+        switch mode {
+        case .scene: return "ts_cal_scene"
+        case .card: return "ts_cal_card"
+        case .manual: return "ts_cal_pts"
+        }
+    }
 
-    /// Switch between Card and Manual. Their numbers are not comparable, so each keeps its own calibration points.
-    func setCardMode(_ on: Bool) {
-        guard on != cardMode else { return }
-        cardMode = on
-        defaults.set(on, forKey: "ts_card_mode")
+    /// Switch mode. Their numbers are not comparable, so each keeps its own calibration points.
+    func setMode(_ new: MeasureMode) {
+        guard new != mode else { return }
+        mode = new
+        defaults.set(new.rawValue, forKey: "ts_mode")
         var pts: [CalPoint] = []
-        if let data = defaults.data(forKey: calibrationKey(card: on)),
+        if let data = defaults.data(forKey: Self.calibrationKey(new)),
            let saved = try? JSONDecoder().decode([CalPoint].self, from: data) { pts = saved }
         calPoints = pts                               // (saved again under the new mode's key, which is harmless)
         engine.reset()
@@ -173,14 +197,14 @@ final class MeterViewModel: ObservableObject {
                     rgb: [r.rgb.r, r.rgb.g, r.rgb.b].map { Int($0.rounded()) }, note: note)
     }
 
-    static func qualityText(_ q: MeterQuality) -> String {
+    static func qualityText(_ q: MeterQuality, mode: MeasureMode) -> String {
         switch q {
-        case .waiting: return "Point at a white or gray card"
+        case .waiting: return mode == .card ? "Point at a white or gray card" : "Point at the light or scene"
         case .tooBright: return "Too bright — tilt away or step back"
         case .tooDark: return "Too dark — move into more light"
         case .moving: return "Moving — hold steady"
         case .settling: return "Settling…"
-        case .steady: return "Steady ✓ Tap the shutter to average"
+        case .steady: return mode == .card ? "Steady ✓ Tap the shutter to average" : "Steady ✓ Tap the shutter to average 3 seconds"
         case .measured: return "Measured: 30-frame average ✓"
         case .noisy(let k): return "Frames disagreed (±\(k)K) — hold steadier, retry"
         }
