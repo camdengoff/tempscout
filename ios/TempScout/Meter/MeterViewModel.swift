@@ -14,7 +14,7 @@ enum MeasureMode: String {
 
 /// Connects the camera to the colour engine and holds the settings.
 final class MeterViewModel: ObservableObject {
-    let camera = CameraController()
+    let camera: CameraController
     private let engine = MeterEngine()
     private var bag = Set<AnyCancellable>()
     private let defaults = UserDefaults.standard
@@ -45,7 +45,8 @@ final class MeterViewModel: ObservableObject {
         }
     }
 
-    init() {
+    init(camera: CameraController) {
+        self.camera = camera
         let d = UserDefaults.standard
         let startMode = MeasureMode(rawValue: d.string(forKey: "ts_mode") ?? "") ?? .scene
         mode = startMode

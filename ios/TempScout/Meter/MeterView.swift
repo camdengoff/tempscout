@@ -9,7 +9,7 @@ private struct PanelHeightKey: PreferenceKey {
 /// Full-screen camera with a frosted control panel over it.
 struct MeterView: View {
     @EnvironmentObject var vm: MeterViewModel
-    @EnvironmentObject var nd: NDModel
+    @EnvironmentObject var plan: FramePlanModel
     @EnvironmentObject var app: AppState
     @EnvironmentObject var library: ShotStore
 
@@ -54,8 +54,12 @@ struct MeterView: View {
         }
         .overlay(alignment: .top) { toastView }
         .sheet(isPresented: $showSettings) { SettingsSheet().environmentObject(vm).environmentObject(library) }
-        .onAppear { vm.camera.start() }
-        .onDisappear { vm.camera.stop() }
+        .onAppear {
+            vm.camera.acquire()
+            vm.camera.setExposureBias(0)             // measuring needs a normal, unbiased exposure
+            vm.camera.setZoom(1)
+        }
+        .onDisappear { vm.camera.release() }
     }
 
     /// The measure square sits in the free space between the status pill and the panel.
@@ -201,17 +205,17 @@ struct MeterView: View {
     }
 
     private var ndRow: some View {
-        let result = nd.result
+        let ndText = plan.ndLabel
         return Button { app.tab = .nd } label: {
             HStack(spacing: 10) {
-                Text(NDCalculator.summary(result))
+                Text(ndText)
                     .font(.system(size: 18, weight: .bold))
                     .lineLimit(1)
                     .padding(.trailing, 10)
                     .overlay(Rectangle().fill(Color.white.opacity(0.18)).frame(width: 1), alignment: .trailing)
-                stat("Shutter", NDCalculator.shutterLabel(nd.wanted.shutter))
-                stat("ISO", NDCalculator.isoLabel(nd.wanted.iso))
-                stat("F-stop", NDCalculator.apertureLabel(nd.wanted.aperture))
+                stat("Shutter", plan.shutterLabel)
+                stat("ISO", String(Int(plan.settings.iso)))
+                stat("F-stop", NDCalculator.apertureLabel(plan.settings.fStop))
                 Image(systemName: "chevron.right").font(.footnote).foregroundColor(Theme.muted)
             }
             .foregroundColor(.white)

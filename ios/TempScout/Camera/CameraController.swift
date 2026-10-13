@@ -17,6 +17,8 @@ struct CameraSample {
     var cardTintPercent: Double = 0
     /// Card mode: how far from neutral the card still looks (0 = neutral); nil when it can't be judged
     var neutralError: Double?
+    /// How bright the scene is (EV at ISO 100) from the camera's own auto exposure, with any exposure bias taken out
+    var sceneEV: Double?
 }
 
 /// Owns the camera. This is the reason the app exists: unlike a web page, it can LOCK the white balance
@@ -33,6 +35,13 @@ final class CameraController: NSObject, ObservableObject, AVCaptureVideoDataOutp
     /// nil = automatic white balance; otherwise the Kelvin the camera is locked at
     @Published private(set) var lockedKelvin: Double?
     @Published private(set) var exposureLocked = false
+    /// How this phone's camera maps the world onto the screen (for drawing other cameras' frames over the picture)
+    @Published private(set) var viewfinder: Viewfinder?
+    @Published private(set) var zoom: Double = 1
+    @Published private(set) var maxZoom: Double = 1
+
+    /// Every reading, for screens that need more than one listener. (`onSample` is used by the Meter.)
+    let samples = PassthroughSubject<CameraSample, Never>()
 
     /// Called on the main thread, about 10 times a second.
     var onSample: ((CameraSample) -> Void)?
@@ -85,6 +94,60 @@ final class CameraController: NSObject, ObservableObject, AVCaptureVideoDataOutp
         }
     }
 
+    // The Meter and the ND page share one camera. Each asks for it when it appears and gives it back when it leaves;
+    // the camera only stops when nobody wants it. (Call from the main thread.)
+    private var users = 0
+
+    func acquire() {
+        users += 1
+        start()
+    }
+
+    func release() {
+        users = max(0, users - 1)
+        if users == 0 { stop() }
+    }
+
+    /// Make the picture brighter or darker by `stops` (the camera still meters automatically around that).
+    func setExposureBias(_ stops: Double) {
+        sessionQueue.async { [weak self] in
+            guard let self = self, let dev = self.device else { return }
+            let bias = max(Double(dev.minExposureTargetBias), min(Double(dev.maxExposureTargetBias), stops))
+            do {
+                try dev.lockForConfiguration()
+                defer { dev.unlockForConfiguration() }
+                dev.setExposureTargetBias(Float(bias), completionHandler: nil)
+            } catch {
+                // keep the current bias
+            }
+        }
+    }
+
+    /// Digital zoom (1 = none), limited to what the camera supports.
+    func setZoom(_ factor: Double) {
+        sessionQueue.async { [weak self] in
+            guard let self = self, let dev = self.device else { return }
+            let limit = min(Double(dev.activeFormat.videoMaxZoomFactor), 8)
+            let z = max(1, min(limit, factor))
+            do {
+                try dev.lockForConfiguration()
+                defer { dev.unlockForConfiguration() }
+                dev.videoZoomFactor = CGFloat(z)
+                DispatchQueue.main.async { self.zoom = z }
+            } catch {
+                // keep the current zoom
+            }
+        }
+    }
+
+    /// Measure the brightness at the middle of the picture (used by the ND page, which looks at the whole scene).
+    func meterAtCenter() {
+        sessionQueue.async { [weak self] in
+            self?.lastMeteredPoint = CGPoint(x: -1, y: -1)
+        }
+        meterExposure(atNormalizedPoint: CGPoint(x: 0.5, y: 0.5))
+    }
+
     private func configureAndRun() {
         sessionQueue.async { [weak self] in
             guard let self = self else { return }
@@ -132,7 +195,16 @@ final class CameraController: NSObject, ObservableObject, AVCaptureVideoDataOutp
         prepareForMeasuring(dev)
         meterExposure(atNormalizedPoint: nil)
         let supported = dev.isLockingWhiteBalanceWithCustomDeviceGainsSupported
-        DispatchQueue.main.async { self.whiteBalanceLockSupported = supported }
+        let dims = CMVideoFormatDescriptionGetDimensions(dev.activeFormat.formatDescription)
+        let finder = Viewfinder(longFOVDegrees: Double(dev.activeFormat.videoFieldOfView),
+                                longPixels: Double(max(dims.width, dims.height)),
+                                shortPixels: Double(min(dims.width, dims.height)))
+        let zoomLimit = min(Double(dev.activeFormat.videoMaxZoomFactor), 8)
+        DispatchQueue.main.async {
+            self.whiteBalanceLockSupported = supported
+            self.viewfinder = finder
+            self.maxZoom = zoomLimit
+        }
         return true
     }
 
@@ -423,8 +495,22 @@ final class CameraController: NSObject, ObservableObject, AVCaptureVideoDataOutp
             }
         }
 
+        var sceneEV: Double?
+        if let dev = device {
+            let seconds = CMTimeGetSeconds(dev.exposureDuration)
+            if seconds > 0, dev.iso > 0, dev.lensAperture > 0 {
+                // the camera's exposure includes any bias we asked for; take it back out to get the scene's own brightness
+                sceneEV = ExposureMath.sceneEV(aperture: Double(dev.lensAperture), shutterSeconds: seconds, iso: Double(dev.iso))
+                    + Double(dev.exposureTargetBias)
+            }
+        }
+
         let sample = CameraSample(linear: average, clipped: clipped, autoKelvin: autoK,
-                                  cardKelvin: cardK, cardTintPercent: cardTint, neutralError: neutralError)
-        DispatchQueue.main.async { [weak self] in self?.onSample?(sample) }
+                                  cardKelvin: cardK, cardTintPercent: cardTint, neutralError: neutralError,
+                                  sceneEV: sceneEV)
+        DispatchQueue.main.async { [weak self] in
+            self?.onSample?(sample)
+            self?.samples.send(sample)
+        }
     }
 }
