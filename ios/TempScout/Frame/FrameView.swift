@@ -84,6 +84,7 @@ struct FrameView: View {
                     }
                 } label: { chip("Frame", plan.aspect.name) }
             }
+            if let camera = camera { PhoneCameraMenu(camera: camera) }
             Toggle("Zoom to fill the screen with the frame", isOn: $plan.settings.zoomToFrame)
             Toggle("Dim outside the frame", isOn: $plan.settings.dimOutside)
             Toggle("Vertical (portrait) frame", isOn: $plan.settings.vertical)
@@ -130,13 +131,7 @@ struct FrameView: View {
     }
 
     private func chip(_ title: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title.uppercased()).font(.system(size: 10)).tracking(0.8).foregroundColor(Theme.muted)
-            Text(value).font(.system(size: 14, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.6).foregroundColor(.white)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+        FrameChip(title: title, value: value)
     }
 
     private func ndChip(_ title: String, stops: Double?) -> some View {
@@ -147,6 +142,43 @@ struct FrameView: View {
                 .foregroundColor(selected ? .black : .white)
                 .padding(.horizontal, 12).padding(.vertical, 8)
                 .background(selected ? Theme.warm : Color.white.opacity(0.1), in: Capsule())
+        }
+    }
+}
+
+/// A small labelled box that opens a menu.
+private struct FrameChip: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title.uppercased()).font(.system(size: 10)).tracking(0.8).foregroundColor(Theme.muted)
+            Text(value).font(.system(size: 14, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.6).foregroundColor(.white)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+    }
+}
+
+/// Which of the phone's cameras to use: Auto (the app picks to suit the lens) or one of them by hand.
+/// Watches the camera so its list fills in once the phone's cameras have been found.
+private struct PhoneCameraMenu: View {
+    @ObservedObject var camera: CameraController
+    @EnvironmentObject var plan: FramePlanModel
+
+    var body: some View {
+        let forced = plan.settings.phoneCamera.flatMap(LensCamera.init(rawValue:))
+        return Menu {
+            Picker("Phone camera", selection: Binding(
+                get: { plan.settings.phoneCamera ?? "auto" },
+                set: { plan.settings.phoneCamera = $0 == "auto" ? nil : $0 })) {
+                Text("Auto").tag("auto")
+                ForEach(camera.availableCameras, id: \.self) { Text($0.title).tag($0.rawValue) }
+            }
+        } label: {
+            FrameChip(title: "Phone camera", value: forced.map { $0.title } ?? "Auto · using \(camera.activeCamera.title)")
         }
     }
 }
@@ -191,8 +223,26 @@ private struct FrameViewport: View {
         return max(1, min(camera.maxZoom, z))
     }
 
+    /// The phone cameras that could be used, with how each one maps the world onto the screen
+    private var candidates: [LensCandidate] {
+        camera.availableCameras.compactMap { kind in
+            camera.cameraViewfinders[kind].map { LensCandidate(id: kind.rawValue, viewfinder: $0) }
+        }
+    }
+
+    /// Auto: Wide by default, the Ultra Wide for a frame the Wide can't show, the Telephoto for a narrow one that fits in it.
+    private var wantedCamera: LensCamera {
+        if let forced = plan.settings.phoneCamera.flatMap(LensCamera.init(rawValue:)), camera.availableCameras.contains(forced) {
+            return forced
+        }
+        let id = LensPlanner.bestCamera(horizontalFOV: plan.horizontalFOV, candidates: candidates,
+                                        viewWidth: Double(width), viewHeight: Double(height))
+        return id.flatMap(LensCamera.init(rawValue:)) ?? .wide
+    }
+
     var body: some View {
         let zoomTarget = desiredZoom
+        let cameraTarget = wantedCamera
         return ZStack {
             Color.black
             CameraPreview(controller: camera, targetRect: .zero)
@@ -219,8 +269,12 @@ private struct FrameViewport: View {
         }
         .frame(width: width, height: height)
         .clipped()
+        .onChange(of: cameraTarget) { camera.selectCamera($0) }
         .onChange(of: zoomTarget) { camera.setZoom($0) }
-        .onAppear { camera.setZoom(zoomTarget) }
+        .onAppear {
+            camera.selectCamera(cameraTarget)
+            camera.setZoom(zoomTarget)
+        }
     }
 
     private var hud: some View {
@@ -230,6 +284,9 @@ private struct FrameViewport: View {
             Text(String(format: "%.1f° × %.1f°  ·  %.0fmm full-frame equivalent", plan.horizontalFOV, plan.verticalFOV, plan.fullFrameEquivalent))
                 .font(.caption)
                 .foregroundColor(Color.white.opacity(0.85))
+            Text(camera.activeCamera.title + " camera" + (camera.zoom > 1.05 ? String(format: " · %.1f× crop", camera.zoom) : ""))
+                .font(.caption2)
+                .foregroundColor(Theme.muted)
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))

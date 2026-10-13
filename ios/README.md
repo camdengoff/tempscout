@@ -73,7 +73,11 @@ The ND tab shows the live camera with another camera's frame drawn over it, and 
 - **Frame:** pick a camera (ARRI, RED, Sony, Canon, Blackmagic, Super 35, Micro 4/3, 1-inch, and more, or your own under
   Custom), a lens focal length and a frame shape (16:9, 2.39:1, 4:3, 9:16…). The frame is drawn at its true size over the live
   picture, with the field of view in degrees and the full-frame equivalent. "Zoom to fill" zooms the phone so the frame fills
-  the screen. The phone's own lens limits what it can show (roughly 26mm to 120mm full-frame equivalent on the main camera).
+  the screen.
+- **Phone cameras switch automatically.** The Wide camera is the default. For a frame the Wide can't show, the app uses the
+  Ultra Wide; for a narrow frame that fits inside the Telephoto's view (on iPhones that have one) it uses the Telephoto;
+  otherwise it digitally crops the Wide. You can force a camera with the "Phone camera" menu. The Meter tab always uses the
+  Wide camera. A frame wider than even the Ultra Wide can show is cut off, with a warning.
 - **Exposure:** set frame rate, shutter angle, ISO and f-stop, then choose an ND filter (or Auto). The app reads the scene's
   brightness from the phone's own auto exposure, shows how many stops over or under your settings would expose it, tells you how
   much ND the scene needs, and brightens or darkens the live picture to preview it.

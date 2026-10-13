@@ -44,6 +44,7 @@ final class FrameLiveModel: ObservableObject {
         appliedBias = 0
         camera.setExposureBias(0)
         camera.setZoom(1)
+        camera.selectCamera(.wide)             // the Meter always measures with the Wide camera
     }
 
     private func handle(_ sample: CameraSample) {

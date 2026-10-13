@@ -56,6 +56,7 @@ struct MeterView: View {
         .sheet(isPresented: $showSettings) { SettingsSheet().environmentObject(vm).environmentObject(library) }
         .onAppear {
             vm.camera.acquire()
+            vm.camera.selectCamera(.wide)            // measuring always uses the Wide camera
             vm.camera.setExposureBias(0)             // measuring needs a normal, unbiased exposure
             vm.camera.setZoom(1)
         }
