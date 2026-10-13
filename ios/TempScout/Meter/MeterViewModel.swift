@@ -69,6 +69,11 @@ final class MeterViewModel: ObservableObject {
         camera.$status
             .sink { [weak self] status in if status == .running { self?.applyCameraSettings() } }
             .store(in: &bag)
+        // a different camera starts with its own white balance and exposure, so apply the chosen mode to it
+        camera.$activeCamera
+            .dropFirst()
+            .sink { [weak self] _ in self?.applyCameraSettings() }
+            .store(in: &bag)
         // let views that watch this model also redraw when the camera's own state changes
         camera.objectWillChange
             .sink { [weak self] _ in self?.objectWillChange.send() }

@@ -399,3 +399,40 @@ final class ExposureMathTests: XCTestCase {
     }
 }
 
+final class LensPlannerTests: XCTestCase {
+    // iPhone-like cameras (angle of view along the long side of a 1920 x 1080 frame), shown in a 393 x 400 view
+    private let ultra = LensCandidate(id: "ultraWide", viewfinder: Viewfinder(longFOVDegrees: 106, longPixels: 1920, shortPixels: 1080))
+    private let wide = LensCandidate(id: "wide", viewfinder: Viewfinder(longFOVDegrees: 67, longPixels: 1920, shortPixels: 1080))
+    private let tele = LensCandidate(id: "telephoto", viewfinder: Viewfinder(longFOVDegrees: 24, longPixels: 1920, shortPixels: 1080))
+
+    private func pick(_ frame: Double, _ cams: [LensCandidate]) -> String? {
+        LensPlanner.bestCamera(horizontalFOV: frame, candidates: cams, viewWidth: 393, viewHeight: 400)
+    }
+
+    func testVisibleFieldsOfView() {
+        XCTAssertEqual(ultra.viewfinder.visibleHorizontalFOV(viewWidth: 393, viewHeight: 400), 73.48, accuracy: 0.01)
+        XCTAssertEqual(wide.viewfinder.visibleHorizontalFOV(viewWidth: 393, viewHeight: 400), 40.84, accuracy: 0.01)
+        XCTAssertEqual(tele.viewfinder.visibleHorizontalFOV(viewWidth: 393, viewHeight: 400), 13.64, accuracy: 0.01)
+    }
+
+    func testPicksTheNarrowestCameraThatStillCoversTheFrame() {
+        let all = [ultra, wide, tele]
+        XCTAssertEqual(pick(10, all), "telephoto")      // fits inside the telephoto's view
+        XCTAssertEqual(pick(20, all), "wide")           // too wide for the telephoto, so wide with a digital crop
+        XCTAssertEqual(pick(30, all), "wide")
+        XCTAssertEqual(pick(40, all), "ultraWide")      // just wider than the wide camera can show
+        XCTAssertEqual(pick(60, all), "ultraWide")
+    }
+
+    func testFrameWiderThanEveryCameraUsesTheWidest() {
+        XCTAssertEqual(pick(100, [ultra, wide, tele]), "ultraWide")
+        XCTAssertEqual(pick(100, [wide, tele]), "wide")
+    }
+
+    func testPhonesWithFewerCameras() {
+        XCTAssertEqual(pick(10, [ultra, wide]), "wide")        // no telephoto: crop the wide camera instead
+        XCTAssertEqual(pick(50, [wide]), "wide")
+        XCTAssertNil(pick(30, []))
+    }
+}
+

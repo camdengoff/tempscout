@@ -21,6 +21,27 @@ struct CameraSample {
     var sceneEV: Double?
 }
 
+/// The phone's back cameras. The Meter always uses the Wide camera; the ND page switches between them to suit the lens you choose.
+enum LensCamera: String, CaseIterable {
+    case ultraWide, wide, telephoto
+
+    var title: String {
+        switch self {
+        case .ultraWide: return "Ultra Wide"
+        case .wide: return "Wide"
+        case .telephoto: return "Telephoto"
+        }
+    }
+
+    var deviceType: AVCaptureDevice.DeviceType {
+        switch self {
+        case .ultraWide: return .builtInUltraWideCamera
+        case .wide: return .builtInWideAngleCamera
+        case .telephoto: return .builtInTelephotoCamera
+        }
+    }
+}
+
 /// Owns the camera. This is the reason the app exists: unlike a web page, it can LOCK the white balance
 /// (and exposure), so the same card under the same light gives the same pixels every time.
 final class CameraController: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleBufferDelegate {
@@ -37,6 +58,10 @@ final class CameraController: NSObject, ObservableObject, AVCaptureVideoDataOutp
     @Published private(set) var exposureLocked = false
     /// How this phone's camera maps the world onto the screen (for drawing other cameras' frames over the picture)
     @Published private(set) var viewfinder: Viewfinder?
+    /// Which back cameras this phone has, which one is in use, and how each maps the world onto the screen
+    @Published private(set) var availableCameras: [LensCamera] = [.wide]
+    @Published private(set) var activeCamera: LensCamera = .wide
+    @Published private(set) var cameraViewfinders: [LensCamera: Viewfinder] = [:]
     @Published private(set) var zoom: Double = 1
     @Published private(set) var maxZoom: Double = 1
 
@@ -49,6 +74,9 @@ final class CameraController: NSObject, ObservableObject, AVCaptureVideoDataOutp
     private let sessionQueue = DispatchQueue(label: "tempscout.camera.session")
     private let sampleQueue = DispatchQueue(label: "tempscout.camera.samples")
     private var device: AVCaptureDevice?
+    private var devices: [LensCamera: AVCaptureDevice] = [:]     // session queue
+    private var activeKind = LensCamera.wide                      // session queue
+    private var biasValue = 0.0                                   // session queue: last exposure bias asked for
     private var configured = false
 
     // Exposure follows the white square. It can be held still two ways: by the user (Settings) or while a Measure runs.
@@ -112,6 +140,7 @@ final class CameraController: NSObject, ObservableObject, AVCaptureVideoDataOutp
     func setExposureBias(_ stops: Double) {
         sessionQueue.async { [weak self] in
             guard let self = self, let dev = self.device else { return }
+            self.biasValue = stops
             let bias = max(Double(dev.minExposureTargetBias), min(Double(dev.maxExposureTargetBias), stops))
             do {
                 try dev.lockForConfiguration()
@@ -200,12 +229,91 @@ final class CameraController: NSObject, ObservableObject, AVCaptureVideoDataOutp
                                 longPixels: Double(max(dims.width, dims.height)),
                                 shortPixels: Double(min(dims.width, dims.height)))
         let zoomLimit = min(Double(dev.activeFormat.videoMaxZoomFactor), 8)
+
+        // find the other back cameras, so the ND page can switch between them
+        var found: [LensCamera: AVCaptureDevice] = [:]
+        for kind in LensCamera.allCases {
+            if let d = AVCaptureDevice.default(kind.deviceType, for: .video, position: .back) { found[kind] = d }
+        }
+        found[.wide] = dev
+        devices = found
+        activeKind = .wide
+        var finders: [LensCamera: Viewfinder] = [:]
+        for (kind, d) in found { finders[kind] = kind == .wide ? finder : estimatedViewfinder(for: d) }
+        let kinds = LensCamera.allCases.filter { found[$0] != nil }
+
         DispatchQueue.main.async {
             self.whiteBalanceLockSupported = supported
             self.viewfinder = finder
             self.maxZoom = zoomLimit
+            self.availableCameras = kinds
+            self.activeCamera = .wide
+            self.cameraViewfinders = finders
         }
         return true
+    }
+
+    /// What a camera's picture will look like once the session is using it, worked out from its 16:9 video format
+    /// (before it is switched to, we can't ask it directly).
+    private func estimatedViewfinder(for dev: AVCaptureDevice) -> Viewfinder {
+        let candidates = dev.formats.filter { f in
+            let d = CMVideoFormatDescriptionGetDimensions(f.formatDescription)
+            return d.width >= 1280 && abs(Double(d.width) / Double(d.height) - 16.0 / 9.0) < 0.02
+        }
+        let format = candidates.min { a, b in
+            CMVideoFormatDescriptionGetDimensions(a.formatDescription).width < CMVideoFormatDescriptionGetDimensions(b.formatDescription).width
+        } ?? dev.activeFormat
+        let d = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+        return Viewfinder(longFOVDegrees: Double(format.videoFieldOfView),
+                          longPixels: Double(max(d.width, d.height)), shortPixels: Double(min(d.width, d.height)))
+    }
+
+    /// Switch to another back camera (e.g. the ultra wide for a very wide lens, or the telephoto for a long one).
+    func selectCamera(_ kind: LensCamera) {
+        sessionQueue.async { [weak self] in
+            guard let self = self, self.configured, kind != self.activeKind, let newDev = self.devices[kind],
+                  let input = try? AVCaptureDeviceInput(device: newDev) else { return }
+
+            self.session.beginConfiguration()
+            let previous = self.session.inputs
+            for old in previous { self.session.removeInput(old) }
+            if self.session.canAddInput(input) {
+                self.session.addInput(input)
+            } else {
+                for old in previous where self.session.canAddInput(old) { self.session.addInput(old) }   // put things back
+                self.session.commitConfiguration()
+                return
+            }
+            self.session.commitConfiguration()
+
+            self.device = newDev
+            self.activeKind = kind
+            self.prepareForMeasuring(newDev)
+            do {
+                try newDev.lockForConfiguration()
+                defer { newDev.unlockForConfiguration() }
+                newDev.videoZoomFactor = 1
+                let bias = max(Double(newDev.minExposureTargetBias), min(Double(newDev.maxExposureTargetBias), self.biasValue))
+                newDev.setExposureTargetBias(Float(bias), completionHandler: nil)
+            } catch {
+                // keep the new camera's defaults
+            }
+            self.lastMeteredPoint = CGPoint(x: -1, y: -1)
+            self.meterExposure(atNormalizedPoint: nil)
+
+            let dims = CMVideoFormatDescriptionGetDimensions(newDev.activeFormat.formatDescription)
+            let finder = Viewfinder(longFOVDegrees: Double(newDev.activeFormat.videoFieldOfView),
+                                    longPixels: Double(max(dims.width, dims.height)),
+                                    shortPixels: Double(min(dims.width, dims.height)))
+            let zoomLimit = min(Double(newDev.activeFormat.videoMaxZoomFactor), 8)
+            DispatchQueue.main.async {
+                self.viewfinder = finder
+                self.cameraViewfinders[kind] = finder
+                self.maxZoom = zoomLimit
+                self.zoom = 1
+                self.activeCamera = kind
+            }
+        }
     }
 
     /// Turn off the things that would quietly change colours: wide-gamut colour and HDR processing.

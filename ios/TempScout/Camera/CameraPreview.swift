@@ -17,6 +17,7 @@ struct CameraPreview: UIViewRepresentable {
     func updateUIView(_ view: PreviewView, context: Context) {
         view.targetRect = targetRect
         view.onMeasureRect = { [weak controller] rect in controller?.setMeasureRect(rect) }
+        view.applyOrientation()            // switching cameras creates a new connection, which starts out sideways
         view.reportMeasureRect()
     }
 }
@@ -30,10 +31,14 @@ final class PreviewView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        if let connection = previewLayer.connection, connection.isVideoOrientationSupported {
+        applyOrientation()
+        reportMeasureRect()
+    }
+
+    func applyOrientation() {
+        if let connection = previewLayer.connection, connection.isVideoOrientationSupported, connection.videoOrientation != .portrait {
             connection.videoOrientation = .portrait
         }
-        reportMeasureRect()
     }
 
     /// The picture is scaled and cropped to fill the screen, so ask the preview layer where the square really

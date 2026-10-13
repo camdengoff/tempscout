@@ -18,6 +18,8 @@ final class FramePlanModel: ObservableObject {
         var dimOutside = true
         var previewExposure = true
         var customCameras: [CameraFormat] = []
+        /// Which of the phone's cameras to use. nil = automatic: the app picks the one that suits the lens and frame.
+        var phoneCamera: String?
     }
 
     @Published var settings: Settings { didSet { save() } }

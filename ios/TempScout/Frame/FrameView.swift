@@ -7,92 +7,42 @@ private struct FramePanelHeightKey: PreferenceKey {
 }
 
 /// The ND page: the live camera with another camera's frame drawn over it, and the exposure previewed with your ND filter.
+///
+/// This view only watches `plan` (your settings), which changes when YOU change something. The live camera numbers are shown
+/// by the two small views below, so the menus in the panel are not rebuilt ten times a second (which would stop them scrolling).
 struct FrameView: View {
     @EnvironmentObject var plan: FramePlanModel
-    @EnvironmentObject var live: FrameLiveModel
-    @EnvironmentObject var meter: MeterViewModel
+    @Environment(\.frameCamera) private var camera: CameraController?
+    @Environment(\.frameLive) private var live: FrameLiveModel?
 
     @State private var section = 0
     @State private var panelHeight: CGFloat = 360
     @State private var showCustom = false
 
-    private var camera: CameraController { meter.camera }
-
     var body: some View {
         GeometryReader { outer in
-            let width = outer.size.width
             let height = max(200, outer.size.height - panelHeight)
-            let zoomTarget = desiredZoom(width: width, height: height)
             VStack(spacing: 0) {
-                viewport(width: width, height: height)
+                if let camera = camera {
+                    FrameViewport(camera: camera, width: outer.size.width, height: height)
+                } else {
+                    Color.black.frame(width: outer.size.width, height: height)
+                }
                 panel
                     .background(GeometryReader { g in Color.clear.preference(key: FramePanelHeightKey.self, value: g.size.height) })
             }
             .onPreferenceChange(FramePanelHeightKey.self) { panelHeight = $0 }
-            .onChange(of: zoomTarget) { camera.setZoom($0) }
-            .onAppear { camera.setZoom(zoomTarget) }
         }
         .background(Color.black)
         .onAppear {
-            camera.acquire()
-            live.appear()
+            camera?.acquire()
+            live?.appear()
         }
         .onDisappear {
-            live.disappear()
-            camera.release()
+            live?.disappear()
+            camera?.release()
         }
         .sheet(isPresented: $showCustom) { CustomGearSheet().environmentObject(plan) }
-    }
-
-    // MARK: - Viewport
-
-    /// Zoom so the chosen frame fills the width of the view (the phone can only zoom in, never out).
-    private func desiredZoom(width: CGFloat, height: CGFloat) -> Double {
-        guard plan.settings.zoomToFrame, let finder = camera.viewfinder else { return 1 }
-        let z = finder.zoomToFill(horizontalFOVDegrees: plan.horizontalFOV, viewWidth: Double(width), viewHeight: Double(height), fraction: 0.92)
-        return max(1, min(camera.maxZoom, z))
-    }
-
-    private func viewport(width: CGFloat, height: CGFloat) -> some View {
-        ZStack {
-            Color.black
-            CameraPreview(controller: camera, targetRect: .zero)
-            if let finder = camera.viewfinder {
-                let frameWidth = finder.points(forFOVDegrees: plan.horizontalFOV, viewWidth: Double(width), viewHeight: Double(height), zoom: camera.zoom)
-                let frameHeight = finder.points(forFOVDegrees: plan.verticalFOV, viewWidth: Double(width), viewHeight: Double(height), zoom: camera.zoom)
-                FrameOverlay(frame: CGSize(width: frameWidth, height: frameHeight), dim: plan.settings.dimOutside)
-                if plan.horizontalFOV > finder.visibleHorizontalFOV(viewWidth: Double(width), viewHeight: Double(height), zoom: camera.zoom) + 0.5 {
-                    VStack {
-                        Spacer()
-                        Text("Wider than this phone lens can show, so the frame is cut off")
-                            .font(.footnote)
-                            .foregroundColor(Theme.warm)
-                            .padding(.horizontal, 12).padding(.vertical, 6)
-                            .background(.ultraThinMaterial, in: Capsule())
-                            .padding(.bottom, 8)
-                    }
-                }
-            }
-            VStack {
-                hud
-                Spacer()
-            }
-        }
-        .frame(width: width, height: height)
-        .clipped()
-    }
-
-    private var hud: some View {
-        VStack(spacing: 6) {
-            Text("\(plan.camera.name) · \(Gear.focalLabel(plan.settings.focal)) · \(plan.aspect.name)")
-                .font(.footnote.weight(.semibold))
-            Text(String(format: "%.1f° × %.1f°  ·  %.0fmm full-frame equivalent", plan.horizontalFOV, plan.verticalFOV, plan.fullFrameEquivalent))
-                .font(.caption)
-                .foregroundColor(Color.white.opacity(0.85))
-        }
-        .padding(.horizontal, 12).padding(.vertical, 8)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
-        .padding(.top, 8)
     }
 
     // MARK: - Panel
@@ -134,6 +84,7 @@ struct FrameView: View {
                     }
                 } label: { chip("Frame", plan.aspect.name) }
             }
+            if let camera = camera { PhoneCameraMenu(camera: camera) }
             Toggle("Zoom to fill the screen with the frame", isOn: $plan.settings.zoomToFrame)
             Toggle("Dim outside the frame", isOn: $plan.settings.dimOutside)
             Toggle("Vertical (portrait) frame", isOn: $plan.settings.vertical)
@@ -174,12 +125,69 @@ struct FrameView: View {
                 }
             }
 
-            readout
+            if let live = live { FrameReadout(live: live) }
             Toggle("Preview the exposure on the picture", isOn: $plan.settings.previewExposure)
         }
     }
 
-    private var readout: some View {
+    private func chip(_ title: String, _ value: String) -> some View {
+        FrameChip(title: title, value: value)
+    }
+
+    private func ndChip(_ title: String, stops: Double?) -> some View {
+        let selected = plan.settings.ndStops == stops
+        return Button { plan.settings.ndStops = stops } label: {
+            Text(title)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(selected ? .black : .white)
+                .padding(.horizontal, 12).padding(.vertical, 8)
+                .background(selected ? Theme.warm : Color.white.opacity(0.1), in: Capsule())
+        }
+    }
+}
+
+/// A small labelled box that opens a menu.
+private struct FrameChip: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title.uppercased()).font(.system(size: 10)).tracking(0.8).foregroundColor(Theme.muted)
+            Text(value).font(.system(size: 14, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.6).foregroundColor(.white)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+    }
+}
+
+/// Which of the phone's cameras to use: Auto (the app picks to suit the lens) or one of them by hand.
+/// Watches the camera so its list fills in once the phone's cameras have been found.
+private struct PhoneCameraMenu: View {
+    @ObservedObject var camera: CameraController
+    @EnvironmentObject var plan: FramePlanModel
+
+    var body: some View {
+        let forced = plan.settings.phoneCamera.flatMap(LensCamera.init(rawValue:))
+        return Menu {
+            Picker("Phone camera", selection: Binding(
+                get: { plan.settings.phoneCamera ?? "auto" },
+                set: { plan.settings.phoneCamera = $0 == "auto" ? nil : $0 })) {
+                Text("Auto").tag("auto")
+                ForEach(camera.availableCameras, id: \.self) { Text($0.title).tag($0.rawValue) }
+            }
+        } label: {
+            FrameChip(title: "Phone camera", value: forced.map { $0.title } ?? "Auto · using \(camera.activeCamera.title)")
+        }
+    }
+}
+
+/// The live exposure numbers. Watches the live model, so it is the only part of the panel that updates with the camera.
+private struct FrameReadout: View {
+    @ObservedObject var live: FrameLiveModel
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             if let ev = live.sceneEV, let needed = live.ndNeeded, let error = live.exposureError {
                 Text(ExposureMath.describe(error: error))
@@ -192,32 +200,97 @@ struct FrameView: View {
                     .font(.footnote).foregroundColor(Theme.muted)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func closestFilterText(_ needed: Double) -> String {
         guard needed > 0.15, let f = Gear.ndFilters.min(by: { abs($0.stops - needed) < abs($1.stops - needed) }) else { return "" }
         return " (closest: \(f.label))"
     }
+}
 
-    private func chip(_ title: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title.uppercased()).font(.system(size: 10)).tracking(0.8).foregroundColor(Theme.muted)
-            Text(value).font(.system(size: 14, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.6).foregroundColor(.white)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+/// The camera picture with the chosen frame drawn over it. Watches the camera (zoom, field of view), not the panel.
+private struct FrameViewport: View {
+    @ObservedObject var camera: CameraController
+    @EnvironmentObject var plan: FramePlanModel
+    let width: CGFloat
+    let height: CGFloat
+
+    /// Zoom so the chosen frame fills the width of the view (the phone can only zoom in, never out).
+    private var desiredZoom: Double {
+        guard plan.settings.zoomToFrame, let finder = camera.viewfinder else { return 1 }
+        let z = finder.zoomToFill(horizontalFOVDegrees: plan.horizontalFOV, viewWidth: Double(width), viewHeight: Double(height), fraction: 0.92)
+        return max(1, min(camera.maxZoom, z))
     }
 
-    private func ndChip(_ title: String, stops: Double?) -> some View {
-        let selected = plan.settings.ndStops == stops
-        return Button { plan.settings.ndStops = stops } label: {
-            Text(title)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(selected ? .black : .white)
-                .padding(.horizontal, 12).padding(.vertical, 8)
-                .background(selected ? Theme.warm : Color.white.opacity(0.1), in: Capsule())
+    /// The phone cameras that could be used, with how each one maps the world onto the screen
+    private var candidates: [LensCandidate] {
+        camera.availableCameras.compactMap { kind in
+            camera.cameraViewfinders[kind].map { LensCandidate(id: kind.rawValue, viewfinder: $0) }
         }
+    }
+
+    /// Auto: Wide by default, the Ultra Wide for a frame the Wide can't show, the Telephoto for a narrow one that fits in it.
+    private var wantedCamera: LensCamera {
+        if let forced = plan.settings.phoneCamera.flatMap(LensCamera.init(rawValue:)), camera.availableCameras.contains(forced) {
+            return forced
+        }
+        let id = LensPlanner.bestCamera(horizontalFOV: plan.horizontalFOV, candidates: candidates,
+                                        viewWidth: Double(width), viewHeight: Double(height))
+        return id.flatMap(LensCamera.init(rawValue:)) ?? .wide
+    }
+
+    var body: some View {
+        let zoomTarget = desiredZoom
+        let cameraTarget = wantedCamera
+        return ZStack {
+            Color.black
+            CameraPreview(controller: camera, targetRect: .zero)
+            if let finder = camera.viewfinder {
+                let frameWidth = finder.points(forFOVDegrees: plan.horizontalFOV, viewWidth: Double(width), viewHeight: Double(height), zoom: camera.zoom)
+                let frameHeight = finder.points(forFOVDegrees: plan.verticalFOV, viewWidth: Double(width), viewHeight: Double(height), zoom: camera.zoom)
+                FrameOverlay(frame: CGSize(width: frameWidth, height: frameHeight), dim: plan.settings.dimOutside)
+                if plan.horizontalFOV > finder.visibleHorizontalFOV(viewWidth: Double(width), viewHeight: Double(height), zoom: camera.zoom) + 0.5 {
+                    VStack {
+                        Spacer()
+                        Text("Wider than this phone lens can show, so the frame is cut off")
+                            .font(.footnote)
+                            .foregroundColor(Theme.warm)
+                            .padding(.horizontal, 12).padding(.vertical, 6)
+                            .background(.ultraThinMaterial, in: Capsule())
+                            .padding(.bottom, 8)
+                    }
+                }
+            }
+            VStack {
+                hud
+                Spacer()
+            }
+        }
+        .frame(width: width, height: height)
+        .clipped()
+        .onChange(of: cameraTarget) { camera.selectCamera($0) }
+        .onChange(of: zoomTarget) { camera.setZoom($0) }
+        .onAppear {
+            camera.selectCamera(cameraTarget)
+            camera.setZoom(zoomTarget)
+        }
+    }
+
+    private var hud: some View {
+        VStack(spacing: 6) {
+            Text("\(plan.camera.name) · \(Gear.focalLabel(plan.settings.focal)) · \(plan.aspect.name)")
+                .font(.footnote.weight(.semibold))
+            Text(String(format: "%.1f° × %.1f°  ·  %.0fmm full-frame equivalent", plan.horizontalFOV, plan.verticalFOV, plan.fullFrameEquivalent))
+                .font(.caption)
+                .foregroundColor(Color.white.opacity(0.85))
+            Text(camera.activeCamera.title + " camera" + (camera.zoom > 1.05 ? String(format: " · %.1f× crop", camera.zoom) : ""))
+                .font(.caption2)
+                .foregroundColor(Theme.muted)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .padding(.top, 8)
     }
 }
 
