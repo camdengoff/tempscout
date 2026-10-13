@@ -64,7 +64,23 @@ For all modes:
 - Exposure automatically follows the white square (and freezes during a Measure).
 - **Calibrate (optional):** if a light whose colour you know reads off, Measure it, type its Kelvin in Settings ▸ Calibrate
   and add it. Each mode keeps its own calibration points.
-- The ND row under the Kelvin number comes from the ND tab; tap it to edit.
+- The ND row under the Kelvin number shows your plan from the ND tab (ND, shutter, ISO, f-stop); tap it to edit.
+
+## ND tab: frame the shot and preview the exposure
+
+The ND tab shows the live camera with another camera's frame drawn over it, and previews the exposure with your ND filter.
+
+- **Frame:** pick a camera (ARRI, RED, Sony, Canon, Blackmagic, Super 35, Micro 4/3, 1-inch, and more, or your own under
+  Custom), a lens focal length and a frame shape (16:9, 2.39:1, 4:3, 9:16…). The frame is drawn at its true size over the live
+  picture, with the field of view in degrees and the full-frame equivalent. "Zoom to fill" zooms the phone so the frame fills
+  the screen. The phone's own lens limits what it can show (roughly 26mm to 120mm full-frame equivalent on the main camera).
+- **Exposure:** set frame rate, shutter angle, ISO and f-stop, then choose an ND filter (or Auto). The app reads the scene's
+  brightness from the phone's own auto exposure, shows how many stops over or under your settings would expose it, tells you how
+  much ND the scene needs, and brightens or darkens the live picture to preview it.
+- The scene brightness assumes the metered area is middle grey (like any reflected light meter), so a very bright or very dark
+  scene reads a little off. Treat the preview as a guide, not a measurement.
+- Camera recording areas are approximate and differ by shooting mode; use Custom for exact numbers.
+- After pulling new code, run `xcodegen` again in `ios/` so Xcode picks up added and removed files.
 
 ## Without XcodeGen
 

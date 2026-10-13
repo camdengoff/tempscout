@@ -10,16 +10,27 @@ final class AppState: ObservableObject {
 
 @main
 struct TempScoutApp: App {
-    @StateObject private var meter = MeterViewModel()
-    @StateObject private var nd = NDModel()
+    @StateObject private var meter: MeterViewModel
+    @StateObject private var plan: FramePlanModel
+    @StateObject private var live: FrameLiveModel
     @StateObject private var library = ShotStore()
     @StateObject private var app = AppState()
+
+    init() {
+        // the Meter and the ND page share one camera
+        let camera = CameraController()
+        let plan = FramePlanModel()
+        _meter = StateObject(wrappedValue: MeterViewModel(camera: camera))
+        _plan = StateObject(wrappedValue: plan)
+        _live = StateObject(wrappedValue: FrameLiveModel(camera: camera, plan: plan))
+    }
 
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environmentObject(meter)
-                .environmentObject(nd)
+                .environmentObject(plan)
+                .environmentObject(live)
                 .environmentObject(library)
                 .environmentObject(app)
                 .preferredColorScheme(.dark)
@@ -35,7 +46,7 @@ struct RootView: View {
             MeterView()
                 .tabItem { Label("Meter", systemImage: "camera.metering.center.weighted") }
                 .tag(AppTab.meter)
-            NDView()
+            FrameView()
                 .tabItem { Label("ND", systemImage: "circle.lefthalf.filled") }
                 .tag(AppTab.nd)
             LibraryView()

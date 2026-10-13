@@ -297,3 +297,105 @@ final class CardModeTests: XCTestCase {
     }
 }
 
+final class FramingTests: XCTestCase {
+    func testFieldOfView() {
+        XCTAssertEqual(Framing.fieldOfView(sizeMM: 36, focalMM: 50), 39.597752709049864, accuracy: 1e-9)
+        XCTAssertEqual(Framing.fieldOfView(sizeMM: 36, focalMM: 24), 73.73979529168804, accuracy: 1e-9)
+        XCTAssertEqual(Framing.fieldOfView(sizeMM: 24, focalMM: 50), 26.991466561591622, accuracy: 1e-9)
+        XCTAssertEqual(Framing.fieldOfView(sizeMM: 36, focalMM: 135), 15.18928673718289, accuracy: 1e-9)
+    }
+
+    func testFrameShapes() {
+        var f = Framing.frame(widthMM: 36, heightMM: 24, aspect: 2.39)          // wider: full width
+        XCTAssertEqual(f.width, 36, accuracy: 1e-9)
+        XCTAssertEqual(f.height, 15.06276150627615, accuracy: 1e-9)
+        f = Framing.frame(widthMM: 36, heightMM: 24, aspect: 1.0)               // narrower: full height
+        XCTAssertEqual(f.width, 24, accuracy: 1e-9)
+        XCTAssertEqual(f.height, 24, accuracy: 1e-9)
+        f = Framing.frame(widthMM: 36, heightMM: 24, aspect: 16.0 / 9.0)
+        XCTAssertEqual(f.width, 36, accuracy: 1e-9)
+        XCTAssertEqual(f.height, 20.25, accuracy: 1e-9)
+        f = Framing.frame(widthMM: 36, heightMM: 24, aspect: 9.0 / 16.0)
+        XCTAssertEqual(f.width, 13.5, accuracy: 1e-9)
+        XCTAssertEqual(f.height, 24, accuracy: 1e-9)
+        f = Framing.frame(widthMM: 36, heightMM: 24, aspect: nil)
+        XCTAssertEqual(f.width, 36)
+        XCTAssertEqual(f.height, 24)
+    }
+
+    func testEquivalentFocalLength() {
+        XCTAssertEqual(Framing.fullFrameEquivalent(focalMM: 50, diagonalMM: CameraFormat(id: "x", name: "x", widthMM: 36, heightMM: 24).diagonalMM), 50, accuracy: 0.05)
+        let bmpcc = Gear.cameras.first { $0.id == "bmpcc-6k" }!
+        XCTAssertEqual(Framing.fullFrameEquivalent(focalMM: 50, diagonalMM: bmpcc.diagonalMM), 81.62927675368938, accuracy: 0.01)
+    }
+
+    func testGearListsAreSane() {
+        XCTAssertTrue(Gear.cameras.contains { $0.id == Gear.defaultCameraID })
+        XCTAssertEqual(Set(Gear.cameras.map { $0.id }).count, Gear.cameras.count)       // unique ids
+        XCTAssertTrue(Gear.cameras.allSatisfy { $0.widthMM > 0 && $0.heightMM > 0 })
+        XCTAssertEqual(Gear.ndFilters.first?.label, "Clear")
+        XCTAssertEqual(Gear.ndFilters.first { $0.stops == 3 }?.label, "ND 0.9")
+        XCTAssertEqual(Gear.ndFilters.first { $0.stops == 10 }?.label, "ND 3.0")
+    }
+
+    // iPhone-like numbers: 70 degree long side, 1920 x 1080 frame, shown in a 393 x 500 view
+    private let phone = Viewfinder(longFOVDegrees: 70, longPixels: 1920, shortPixels: 1080)
+
+    func testViewfinderGeometry() {
+        XCTAssertEqual(phone.focalPixels(), 1371.0220864724301, accuracy: 1e-6)
+        XCTAssertEqual(phone.pointsPerPixel(viewWidth: 393, viewHeight: 500), 0.3638888888888889, accuracy: 1e-12)
+        XCTAssertEqual(phone.visibleHorizontalFOV(viewWidth: 393, viewHeight: 500), 42.99566141876366, accuracy: 1e-6)
+    }
+
+    func testFrameSizeOnScreen() {
+        let w = phone.points(forFOVDegrees: 39.5978, viewWidth: 393, viewHeight: 500)
+        XCTAssertEqual(w, 359.20825180617965, accuracy: 0.01)
+        // a frame exactly as wide as the phone shows fills the view width
+        let visible = phone.visibleHorizontalFOV(viewWidth: 393, viewHeight: 500)
+        XCTAssertEqual(phone.points(forFOVDegrees: visible, viewWidth: 393, viewHeight: 500), 393, accuracy: 1e-6)
+        // zooming in makes everything bigger in proportion
+        let z2 = phone.points(forFOVDegrees: 39.5978, viewWidth: 393, viewHeight: 500, zoom: 2)
+        XCTAssertEqual(z2, 2 * w, accuracy: 1e-6)
+    }
+
+    func testZoomToFill() {
+        let z = phone.zoomToFill(horizontalFOVDegrees: 39.5978, viewWidth: 393, viewHeight: 500, fraction: 0.9)
+        XCTAssertEqual(z, 0.9846655755303979, accuracy: 1e-6)
+        let width = phone.points(forFOVDegrees: 39.5978, viewWidth: 393, viewHeight: 500, zoom: z)
+        XCTAssertEqual(width, 0.9 * 393, accuracy: 1e-6)
+    }
+}
+
+final class ExposureMathTests: XCTestCase {
+    func testSceneEV() {
+        // "Sunny 16": f/16 at 1/100 s, ISO 100 is about EV 14.6
+        XCTAssertEqual(ExposureMath.sceneEV(aperture: 16, shutterSeconds: 0.01, iso: 100), 14.643856189774725, accuracy: 1e-9)
+    }
+
+    func testShutter() {
+        XCTAssertEqual(ExposureMath.shutterSeconds(angle: 180, fps: 24), 1.0 / 48, accuracy: 1e-12)
+        XCTAssertEqual(ExposureMath.shutterSeconds(angle: 172.8, fps: 24), 0.02, accuracy: 1e-12)
+        XCTAssertEqual(ExposureMath.shutterSeconds(angle: 90, fps: 25), 0.01, accuracy: 1e-12)
+        XCTAssertEqual(ExposureMath.shutterSeconds(angle: 360, fps: 30), 1.0 / 30, accuracy: 1e-12)
+    }
+
+    func testNDNeededAndError() {
+        let scene = 14.643856189774725                       // bright sun
+        let t = 1.0 / 48
+        XCTAssertEqual(ExposureMath.evForSettings(fStop: 2.8, shutterSeconds: t, iso: 800, ndStops: 0), 5.55581615506164, accuracy: 1e-9)
+        XCTAssertEqual(ExposureMath.ndNeeded(sceneEV: scene, fStop: 2.8, shutterSeconds: t, iso: 800), 9.088040034713085, accuracy: 1e-9)
+        // with a 9 stop ND (ND 2.7) it is almost exactly right: 0.09 stops over
+        XCTAssertEqual(ExposureMath.exposureError(sceneEV: scene, fStop: 2.8, shutterSeconds: t, iso: 800, ndStops: 9), 0.08804003471308519, accuracy: 1e-9)
+        // with no ND it is about 9 stops over
+        XCTAssertEqual(ExposureMath.exposureError(sceneEV: scene, fStop: 2.8, shutterSeconds: t, iso: 800, ndStops: 0), 9.088040034713085, accuracy: 1e-9)
+        // a dim scene needs no ND
+        XCTAssertEqual(ExposureMath.ndNeeded(sceneEV: 3, fStop: 2.8, shutterSeconds: t, iso: 800), 0)
+    }
+
+    func testDescribe() {
+        XCTAssertEqual(ExposureMath.describe(error: 0.1), "Correct")
+        XCTAssertEqual(ExposureMath.describe(error: 1.33), "+1.3 stops over")
+        XCTAssertEqual(ExposureMath.describe(error: -2.0), "-2.0 stops under")
+    }
+}
+
